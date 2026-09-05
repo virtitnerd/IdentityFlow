@@ -27,4 +27,15 @@ public interface IEntraDirectoryClient
         string groupObjectId,
         IReadOnlySet<string> desiredMemberObjectIds,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Lists the custom directory extension attributes registered on the
+    /// sync service's own app registration (<c>GET
+    /// /applications/{id}/extensionProperties</c>), returned as their full
+    /// flat name (e.g. "extension_3f1a2b...9c_CostCenter") ready to use as
+    /// a <see cref="Configuration.FieldMapping.TargetAttribute"/>. Used
+    /// only to populate suggestions in the admin UI - returns an empty
+    /// list (never throws) if Graph is unreachable or none are registered.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetCustomExtensionAttributeNamesAsync(CancellationToken cancellationToken = default);
 }

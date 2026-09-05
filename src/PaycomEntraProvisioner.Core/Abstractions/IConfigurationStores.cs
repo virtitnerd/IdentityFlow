@@ -30,3 +30,16 @@ public interface IEmployeeSnapshotStore
     Task<IReadOnlyDictionary<string, EmployeeSnapshot>> GetAllAsync(CancellationToken cancellationToken = default);
     Task SaveAsync(IEnumerable<EmployeeSnapshot> snapshots, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Tracks every Paycom field name actually observed across sync runs, so
+/// the admin UI can suggest real source field names for
+/// <see cref="FieldMapping.SourceField"/> instead of a static guess.
+/// </summary>
+public interface IDiscoveredFieldStore
+{
+    Task<IReadOnlyList<string>> GetKnownFieldNamesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Upserts each field name's first/last-seen timestamp for this run.</summary>
+    Task RecordObservedFieldsAsync(IEnumerable<string> fieldNames, DateTimeOffset observedAt, CancellationToken cancellationToken = default);
+}

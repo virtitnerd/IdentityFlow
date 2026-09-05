@@ -33,6 +33,18 @@ public sealed class EntraOptions
     /// <summary>Synchronization job id under that service principal (created when the provisioning job is configured).</summary>
     public required string ProvisioningJobId { get; set; }
 
+    /// <summary>
+    /// Object ID (not the Application/client ID) of this solution's own
+    /// sync-service app registration, from its Overview page in the Entra
+    /// admin center. Used only to look up custom directory extension
+    /// attributes registered on it
+    /// (<c>GET /applications/{id}/extensionProperties</c>) so the admin UI
+    /// can suggest them as field-mapping targets. Requires the
+    /// Application.Read.All application permission; leave null to skip
+    /// this suggestion source entirely.
+    /// </summary>
+    public string? SyncServiceAppObjectId { get; set; }
+
     public string GraphBaseUrl { get; set; } = "https://graph.microsoft.com/v1.0";
 
     /// <summary>Max SCIM operations per bulkUpload call. Entra currently documents a limit of 50.</summary>

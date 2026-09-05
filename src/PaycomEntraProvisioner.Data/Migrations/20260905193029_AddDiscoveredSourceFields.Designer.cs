@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PaycomEntraProvisioner.Data;
 
@@ -11,9 +12,11 @@ using PaycomEntraProvisioner.Data;
 namespace PaycomEntraProvisioner.Data.Migrations
 {
     [DbContext(typeof(ProvisionerDbContext))]
-    partial class ProvisionerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905193029_AddDiscoveredSourceFields")]
+    partial class AddDiscoveredSourceFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

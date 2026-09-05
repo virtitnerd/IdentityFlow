@@ -13,6 +13,13 @@
     mapping as a <strong>matching attribute</strong> (e.g. userPrincipalName)
     so the Entra provisioning job can anchor incoming records to existing users.
 </p>
+<p class="text-muted small">
+    Source field suggestions come from fields actually seen in past sync runs (dry runs included) -
+    the list is empty until the first one completes. Target attribute suggestions combine the standard
+    Entra attributes, extensionAttribute1-15, and any custom directory extensions registered on the sync
+    service's app registration. Both fields accept any value, typed or picked - the lists are a memory
+    aid, not a restriction.
+</p>
 
 <table class="table table-striped align-middle">
     <thead>
@@ -51,11 +58,27 @@
 <form method="post" asp-page-handler="Save" class="row g-3">
     <div class="col-md-3">
         <label class="form-label" asp-for="Input.SourceField">Source field (Paycom)</label>
-        <input class="form-control" asp-for="Input.SourceField" placeholder="Email_Work" />
+        <input class="form-control" asp-for="Input.SourceField" list="paycomFieldOptions" placeholder="Email_Work" autocomplete="off" />
+        <datalist id="paycomFieldOptions">
+            @foreach (var field in Model.KnownPaycomFields)
+            {
+                <option value="@field"></option>
+            }
+        </datalist>
+        @if (Model.KnownPaycomFields.Count == 0)
+        {
+            <div class="form-text">No fields observed yet - run a sync (a dry run works) to populate this list.</div>
+        }
     </div>
     <div class="col-md-3">
         <label class="form-label" asp-for="Input.TargetAttribute">Target attribute (Entra)</label>
-        <input class="form-control" asp-for="Input.TargetAttribute" placeholder="userPrincipalName" />
+        <input class="form-control" asp-for="Input.TargetAttribute" list="entraAttributeOptions" placeholder="userPrincipalName" autocomplete="off" />
+        <datalist id="entraAttributeOptions">
+            @foreach (var entraAttributeName in Model.EntraAttributeSuggestions)
+            {
+                <option value="@entraAttributeName"></option>
+            }
+        </datalist>
     </div>
     <div class="col-md-4">
         <label class="form-label" asp-for="Input.TransformExpression">Transform (optional)</label>

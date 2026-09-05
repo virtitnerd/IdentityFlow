@@ -61,6 +61,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'Entra__ClientSecret', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=Entra-ClientSecret)' }
         { name: 'Entra__ProvisioningServicePrincipalId', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=Entra-ProvisioningServicePrincipalId)' }
         { name: 'Entra__ProvisioningJobId', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=Entra-ProvisioningJobId)' }
+        { name: 'Entra__SyncServiceAppObjectId', value: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=Entra-SyncServiceAppObjectId)' }
       ]
     }
   }

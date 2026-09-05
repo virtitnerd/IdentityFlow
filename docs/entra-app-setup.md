@@ -45,6 +45,10 @@ as (client credentials) to call Graph.
    **Application permissions**, add:
    - `User.Read.All` (resolve users for group reconciliation)
    - `Group.ReadWrite.All` (assigned-group membership reconciliation)
+   - `Application.Read.All` (optional - lets the admin UI list this app's
+     own registered custom directory extension attributes as target-field
+     suggestions; the Field Mappings page works without it, just without
+     that one suggestion source)
 4. Grant this app the provisioning job's own app role so it's allowed to
    call `bulkUpload`: on the **API-driven provisioning** service principal
    from step 1, grant this app registration the
@@ -70,7 +74,37 @@ as (client credentials) to call Graph.
    in the app registration's **API permissions** blade.
 6. Record: **Application (client) ID** → `Entra:ClientId`, **Directory
    (tenant) ID** → `Entra:TenantId`, the client secret value →
-   `Entra:ClientSecret`.
+   `Entra:ClientSecret`, and the **Object ID** (also on the Overview page -
+   distinct from the Application/client ID) → `Entra:SyncServiceAppObjectId`.
+
+### Optional: custom directory extension attributes
+
+If you want a Paycom field to land somewhere other than a core attribute
+or one of the 15 `extensionAttribute` slots - your own named property for
+a dynamic group rule or another application to read - register it as a
+directory extension on this same app registration. There's no Entra admin
+center UI for this; it's PowerShell/Graph-only:
+
+```powershell
+Connect-MgGraph -Scopes "Application.ReadWrite.All"
+
+$syncApp = Get-MgApplication -Filter "displayName eq 'Paycom Entra Provisioner - Sync Service'"
+
+New-MgApplicationExtensionProperty -ApplicationId $syncApp.Id -BodyParameter @{
+    name = "CostCenter"
+    dataType = "String"
+    targetObjects = @("User")
+}
+```
+
+That creates an attribute named `extension_<appId-without-hyphens>_CostCenter`
+on every user. Once created, it shows up automatically as a target-attribute
+suggestion on the Field Mappings page (via `Application.Read.All` - see step
+3 above) - no restart needed, the page reads it live from Graph on each load.
+You'll also need to add it manually under the API-driven provisioning job's
+**Attribute Mapping → Advanced Options → Edit target User attributes** (see
+[paycom-integration.md](paycom-integration.md) and Microsoft's own inbound
+provisioning docs) before it'll actually be written by `bulkUpload`.
 
 ## 3. The admin UI sign-in app registration
 

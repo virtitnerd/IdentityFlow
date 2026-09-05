@@ -82,8 +82,13 @@ need to touch it at all.
   `IEntraDirectoryClient` (user lookup + assigned-group reconciliation via
   the Microsoft Graph SDK).
 - **PaycomEntraProvisioner.Data** - EF Core (Azure SQL) persistence for
-  field mappings, group rules, sync run history, and employee snapshots
-  (used to detect a worker vanishing from the Paycom feed entirely).
+  field mappings, group rules, sync run history, employee snapshots
+  (used to detect a worker vanishing from the Paycom feed entirely), and a
+  catalog of Paycom field names actually observed across runs - the admin
+  UI uses it (plus a static list of standard Entra attributes and a live
+  Graph lookup of registered custom directory extensions) to offer
+  autocomplete suggestions on the Field Mappings page rather than requiring
+  the source/target field names to be typed from memory.
 - **PaycomEntraProvisioner.Functions** - Azure Functions isolated worker.
   `TimerSync` runs the pipeline on a configurable NCRONTAB schedule;
   `ManualSync` is a function-key-secured HTTP entry point for automation.

@@ -19,6 +19,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IGroupAssignmentRuleStore, GroupAssignmentRuleStore>();
         services.AddScoped<ISyncRunStore, SyncRunStore>();
         services.AddScoped<IEmployeeSnapshotStore, EmployeeSnapshotStore>();
+        services.AddScoped<IDiscoveredFieldStore, DiscoveredFieldStore>();
 
         return services;
     }

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
 using Microsoft.Graph.Models.ODataErrors;
@@ -16,6 +17,7 @@ namespace PaycomEntraProvisioner.Graph;
 /// </summary>
 public sealed class EntraDirectoryClient(
     GraphServiceClient graphServiceClient,
+    IOptionsMonitor<EntraOptions> optionsMonitor,
     ILogger<EntraDirectoryClient> logger) : IEntraDirectoryClient
 {
     public async Task<string?> FindUserObjectIdAsync(string userPrincipalName, CancellationToken cancellationToken = default)
@@ -78,6 +80,40 @@ public sealed class EntraDirectoryClient(
         }
 
         return new GroupReconciliationResult(groupObjectId, added, removed, errors);
+    }
+
+    public async Task<IReadOnlyList<string>> GetCustomExtensionAttributeNamesAsync(CancellationToken cancellationToken = default)
+    {
+        var appObjectId = optionsMonitor.CurrentValue.SyncServiceAppObjectId;
+        if (string.IsNullOrEmpty(appObjectId))
+        {
+            return [];
+        }
+
+        try
+        {
+            var page = await graphServiceClient.Applications[appObjectId].ExtensionProperties
+                .GetAsync(rc => rc.QueryParameters.Select = ["name"], cancellationToken);
+
+            var names = new List<string>();
+            var iterator = PageIterator<ExtensionProperty, ExtensionPropertyCollectionResponse>
+                .CreatePageIterator(graphServiceClient, page!, property =>
+                {
+                    if (!string.IsNullOrEmpty(property.Name))
+                    {
+                        names.Add(property.Name);
+                    }
+                    return true;
+                });
+
+            await iterator.IterateAsync(cancellationToken);
+            return names;
+        }
+        catch (ODataError ex)
+        {
+            logger.LogWarning(ex, "Could not read registered directory extension properties; suggestions will fall back to the standard attribute list only.");
+            return [];
+        }
     }
 
     private async Task<HashSet<string>> GetCurrentMemberIdsAsync(

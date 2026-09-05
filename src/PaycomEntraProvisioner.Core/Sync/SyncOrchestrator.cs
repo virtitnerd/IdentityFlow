@@ -24,6 +24,7 @@ public sealed class SyncOrchestrator(
     IGroupAssignmentRuleStore groupRuleStore,
     ISyncRunStore syncRunStore,
     IEmployeeSnapshotStore snapshotStore,
+    IDiscoveredFieldStore discoveredFieldStore,
     MappingEngine mappingEngine,
     GroupRuleEvaluator groupRuleEvaluator,
     ILogger<SyncOrchestrator> logger)
@@ -51,6 +52,9 @@ public sealed class SyncOrchestrator(
             var previousSnapshots = await snapshotStore.GetAllAsync(cancellationToken);
 
             run.EmployeesEvaluated = employees.Count;
+
+            var observedFieldNames = employees.SelectMany(e => e.RawFields.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
+            await discoveredFieldStore.RecordObservedFieldsAsync(observedFieldNames, run.StartedAt, cancellationToken);
 
             var operations = BuildBulkOperations(run, employees, mappings);
             AppendVanishedEmployeeDisableOps(run, employees, previousSnapshots, operations);
