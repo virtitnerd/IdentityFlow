@@ -1,0 +1,62 @@
+@page "{id:guid}"
+@model PaycomEntraProvisioner.Web.Pages.SyncRuns.DetailsModel
+@{
+    ViewData["Title"] = "Sync Run Details";
+}
+
+@if (Model.Run is null)
+{
+    <p>Run not found.</p>
+}
+else
+{
+    var run = Model.Run;
+    <h1>Sync Run @run.Id</h1>
+
+    <dl class="row">
+        <dt class="col-sm-2">Started</dt>
+        <dd class="col-sm-10">@run.StartedAt.ToLocalTime().ToString("F")</dd>
+        <dt class="col-sm-2">Completed</dt>
+        <dd class="col-sm-10">@(run.CompletedAt?.ToLocalTime().ToString("F") ?? "in progress")</dd>
+        <dt class="col-sm-2">Trigger</dt>
+        <dd class="col-sm-10">@run.Trigger @(run.DryRun ? "(dry run - no writes were made)" : "")@(run.TriggeredByUser is { } u ? $" by {u}" : "")</dd>
+        <dt class="col-sm-2">Status</dt>
+        <dd class="col-sm-10">@run.Status</dd>
+        @if (!string.IsNullOrEmpty(run.ErrorSummary))
+        {
+            <dt class="col-sm-2">Errors</dt>
+            <dd class="col-sm-10 text-danger">@run.ErrorSummary</dd>
+        }
+    </dl>
+
+    <div class="row text-center mb-4">
+        <div class="col"><div class="border rounded p-3"><div class="h3">@run.EmployeesEvaluated</div><div class="text-muted">Evaluated</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="h3">@run.RecordsSubmitted</div><div class="text-muted">Submitted</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="h3">@run.RecordsSkipped</div><div class="text-muted">Skipped</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="h3">@run.RecordsFailed</div><div class="text-muted">Failed</div></div></div>
+        <div class="col"><div class="border rounded p-3"><div class="h3">+@run.GroupMembershipsAdded / -@run.GroupMembershipsRemoved</div><div class="text-muted">Group changes</div></div></div>
+    </div>
+
+    <h2 class="h4">Per-employee results</h2>
+    <table class="table table-striped table-sm">
+        <thead>
+            <tr>
+                <th>Employee</th>
+                <th>Name</th>
+                <th>Outcome</th>
+                <th>Detail</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var result in run.EmployeeResults.OrderBy(r => r.Success).ThenBy(r => r.EmployeeCode))
+            {
+                <tr class="@(result.Success ? "" : "table-danger")">
+                    <td>@result.EmployeeCode</td>
+                    <td>@result.DisplayName</td>
+                    <td>@result.Outcome</td>
+                    <td class="text-muted small">@result.Detail</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}

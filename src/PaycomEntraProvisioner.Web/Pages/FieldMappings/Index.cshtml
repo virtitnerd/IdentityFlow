@@ -1,0 +1,91 @@
+@page
+@model PaycomEntraProvisioner.Web.Pages.FieldMappings.IndexModel
+@{
+    ViewData["Title"] = "Field Mappings";
+}
+
+<h1>Field Mappings</h1>
+<p class="text-muted">
+    Maps each Paycom field to its Entra ID / SCIM target attribute. Check
+    <strong>Extension attribute</strong> for values destined for
+    extensionAttribute1-15 or a directory schema extension - useful for
+    dynamic group rules or fields other applications read. Mark at least one
+    mapping as a <strong>matching attribute</strong> (e.g. userPrincipalName)
+    so the Entra provisioning job can anchor incoming records to existing users.
+</p>
+
+<table class="table table-striped align-middle">
+    <thead>
+        <tr>
+            <th>Source field (Paycom)</th>
+            <th>Target attribute (Entra)</th>
+            <th>Transform</th>
+            <th>Ext. attr.</th>
+            <th>Matching</th>
+            <th>Enabled</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var mapping in Model.Mappings)
+        {
+            <tr>
+                <td><code>@mapping.SourceField</code></td>
+                <td><code>@mapping.TargetAttribute</code></td>
+                <td class="text-muted small">@mapping.TransformExpression</td>
+                <td>@(mapping.IsExtensionAttribute ? "Yes" : "")</td>
+                <td>@(mapping.IsMatchingAttribute ? "Yes" : "")</td>
+                <td>@(mapping.Enabled ? "Yes" : "No")</td>
+                <td>
+                    <form method="post" asp-page-handler="Delete" asp-route-id="@mapping.Id"
+                          onsubmit="return confirm('Delete this field mapping?');">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h2 class="h4 mt-4">Add a field mapping</h2>
+<form method="post" asp-page-handler="Save" class="row g-3">
+    <div class="col-md-3">
+        <label class="form-label" asp-for="Input.SourceField">Source field (Paycom)</label>
+        <input class="form-control" asp-for="Input.SourceField" placeholder="Email_Work" />
+    </div>
+    <div class="col-md-3">
+        <label class="form-label" asp-for="Input.TargetAttribute">Target attribute (Entra)</label>
+        <input class="form-control" asp-for="Input.TargetAttribute" placeholder="userPrincipalName" />
+    </div>
+    <div class="col-md-4">
+        <label class="form-label" asp-for="Input.TransformExpression">Transform (optional)</label>
+        <input class="form-control" asp-for="Input.TransformExpression" placeholder="value.ToLower()" />
+    </div>
+    <div class="col-md-2 d-flex align-items-end gap-3">
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.IsExtensionAttribute" />
+            <label class="form-check-label" asp-for="Input.IsExtensionAttribute">Ext. attr.</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.IsMatchingAttribute" />
+            <label class="form-check-label" asp-for="Input.IsMatchingAttribute">Matching</label>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.Enabled" checked />
+            <label class="form-check-label" asp-for="Input.Enabled">Enabled</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.SendNullToClearValue" />
+            <label class="form-check-label" asp-for="Input.SendNullToClearValue">Send null to clear existing value</label>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <label class="form-label" asp-for="Input.Notes">Notes</label>
+        <input class="form-control" asp-for="Input.Notes" />
+    </div>
+    <div class="col-12">
+        <button type="submit" class="btn btn-primary">Add mapping</button>
+    </div>
+</form>

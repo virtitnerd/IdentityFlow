@@ -55,3 +55,13 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Azure Functions / secrets - never commit these
+local.settings.json
+appsettings.Development.json
+appsettings.*.local.json
+*.PublishSettings
+
+# Rider / VS
+.idea/
+.vs/

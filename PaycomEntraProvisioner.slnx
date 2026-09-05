@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PaycomEntraProvisioner.Core/PaycomEntraProvisioner.Core.csproj" />
+    <Project Path="src/PaycomEntraProvisioner.Data/PaycomEntraProvisioner.Data.csproj" />
+    <Project Path="src/PaycomEntraProvisioner.Functions/PaycomEntraProvisioner.Functions.csproj" />
+    <Project Path="src/PaycomEntraProvisioner.Graph/PaycomEntraProvisioner.Graph.csproj" />
+    <Project Path="src/PaycomEntraProvisioner.Paycom/PaycomEntraProvisioner.Paycom.csproj" />
+    <Project Path="src/PaycomEntraProvisioner.Web/PaycomEntraProvisioner.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PaycomEntraProvisioner.Core.Tests/PaycomEntraProvisioner.Core.Tests.csproj" />
+  </Folder>
+</Solution>
