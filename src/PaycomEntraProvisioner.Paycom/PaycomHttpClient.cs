@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -20,27 +21,64 @@ public sealed class PaycomHttpClient(
         var options = optionsMonitor.CurrentValue;
         await ApplyAuthenticationAsync(options, cancellationToken);
 
-        using var response = await httpClient.GetAsync(options.EmployeeReportPath, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var records = new List<EmployeeRecord>();
+        var page = 1;
 
-        var document = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-        var array = ExtractEmployeeArray(document, options.ResponseArrayProperty);
-
-        var records = new List<EmployeeRecord>(array.GetArrayLength());
-        foreach (var item in array.EnumerateArray())
+        // Paycom caps pagesize at 500 and signals more pages with HTTP 206
+        // Partial Content rather than a distinct "hasMore" field, so page
+        // until a response comes back with fewer than a full page.
+        while (true)
         {
-            try
+            var requestUri = BuildRequestUri(options, page);
+            using var response = await httpClient.GetAsync(requestUri, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var document = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+            var array = ExtractEmployeeArray(document, options.ResponseArrayProperty);
+
+            var pageCount = 0;
+            foreach (var item in array.EnumerateArray())
             {
-                records.Add(ParseEmployee(item, options));
+                pageCount++;
+                try
+                {
+                    records.Add(ParseEmployee(item, options));
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Skipped an employee record that could not be parsed from the Paycom response.");
+                }
             }
-            catch (Exception ex)
+
+            logger.LogInformation("Retrieved page {Page} ({Count} records) from Paycom.", page, pageCount);
+
+            if (pageCount < options.PageSize)
             {
-                logger.LogWarning(ex, "Skipped an employee record that could not be parsed from the Paycom response.");
+                break;
             }
+
+            page++;
         }
 
-        logger.LogInformation("Retrieved {Count} employee records from Paycom.", records.Count);
+        logger.LogInformation("Retrieved {Count} employee records from Paycom across {Pages} page(s).", records.Count, page);
         return records;
+    }
+
+    private static string BuildRequestUri(PaycomClientOptions options, int page)
+    {
+        var path = options.EmployeeReportPath.TrimStart('/');
+        var query = new List<string>
+        {
+            $"pagesize={options.PageSize}",
+            $"page={page}"
+        };
+
+        foreach (var (key, value) in options.QueryParameters)
+        {
+            query.Add($"{Uri.EscapeDataString(key)}={Uri.EscapeDataString(value)}");
+        }
+
+        return $"{path}?{string.Join('&', query)}";
     }
 
     private static JsonElement ExtractEmployeeArray(JsonElement document, string? arrayProperty)
@@ -154,10 +192,11 @@ public sealed class PaycomHttpClient(
     {
         if (options.AuthMode == PaycomAuthMode.ApiKey)
         {
-            httpClient.DefaultRequestHeaders.Remove("APISID");
-            httpClient.DefaultRequestHeaders.Remove("APIToken");
-            httpClient.DefaultRequestHeaders.Add("APISID", options.Sid);
-            httpClient.DefaultRequestHeaders.Add("APIToken", options.ApiToken);
+            // Confirmed against Paycom's API Companion Guide: standard HTTP
+            // Basic Authentication, SID as username and the API token as
+            // password - not custom headers.
+            var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{options.Sid}:{options.ApiToken}"));
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
             return;
         }
 

@@ -7,7 +7,11 @@
 - Azure CLI (`az`) with the Bicep extension (`az bicep install`)
 - A SQL Server instance for local dev (LocalDB on Windows, or Azure SQL / SQL Server container elsewhere)
 - The three Entra ID objects from [entra-app-setup.md](entra-app-setup.md)
-- Paycom API access - see [paycom-integration.md](paycom-integration.md)
+- Paycom API access - see [paycom-integration.md](paycom-integration.md).
+  Get sandbox credentials from Paycom's automation team first
+  (`automation@paycomonline.com`) and allow-list your dev machine's IP
+  before expecting local `GetAllEmployeesAsync` calls to succeed (a 401
+  from Paycom almost always means the calling IP isn't allow-listed).
 
 ## Local development
 
@@ -55,7 +59,16 @@ After the deployment finishes:
 2. Run `infra/post-deploy-sql-grants.sql` against the new database as the
    Entra AAD admin configured in `main.bicepparam`, substituting the actual
    Function App / Web App names from the deployment output.
-3. Deploy the application code:
+3. Register the Function App's outbound IPs with Paycom before flipping on
+   the live (non-sandbox) credentials - Paycom only accepts calls from
+   allow-listed IPs:
+   ```
+   az functionapp show -g rg-paycom-provisioner -n <functionAppName> --query possibleOutboundIpAddresses -o tsv
+   ```
+   Send that list to your Paycom Specialist/automation team. See
+   [paycom-integration.md](paycom-integration.md) for the VNet+NAT Gateway
+   alternative if you'd rather have one static egress IP than a range.
+4. Deploy the application code:
    ```
    dotnet publish src/PaycomEntraProvisioner.Functions -c Release -o out/functions
    func azure functionapp publish <functionAppName> --dotnet-isolated
@@ -63,10 +76,10 @@ After the deployment finishes:
    dotnet publish src/PaycomEntraProvisioner.Web -c Release -o out/web
    az webapp deploy -g rg-paycom-provisioner -n <webAppName> --src-path out/web
    ```
-4. Sign in to the Web app once as an admin and add your real field mappings
+5. Sign in to the Web app once as an admin and add your real field mappings
    and group rules (or seed them via a database script if you're migrating
    from an existing process).
-5. Run a dry-run sync from the dashboard, review it, then let the Function's
+6. Run a dry-run sync from the dashboard, review it, then let the Function's
    timer trigger take over.
 
 ## CI

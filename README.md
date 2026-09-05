@@ -23,12 +23,31 @@ src/
   PaycomEntraProvisioner.Functions/ Azure Functions isolated worker (timer + HTTP triggers)
   PaycomEntraProvisioner.Web/       Razor Pages admin/monitoring UI (Entra ID sign-in)
 tests/
-  PaycomEntraProvisioner.Core.Tests/
+  PaycomEntraProvisioner.Core.Tests/    Mapping engine + group rule evaluator
+  PaycomEntraProvisioner.Paycom.Tests/  Paycom HTTP client (auth, pagination, URL composition)
 infra/                              Bicep IaC
 docs/                               Architecture, Entra app setup, Paycom integration, deployment
 ```
 
 Built on .NET 10 / C#.
+
+## FAQ
+
+**Does it update existing/already-provisioned users, or just create new ones?**
+Both, by design rather than by extra code. Every sync run rebuilds a
+*complete current-state* SCIM record for every provisionable employee from
+whatever Paycom reports right now - not a diff. Entra's own provisioning
+service compares that against the existing user and applies whatever
+changed (new department, new manager, new title, ...) as an update. So a
+change in Paycom shows up in Entra on the next scheduled run automatically;
+this solution never computes "what changed" itself for the Entra side. See
+[docs/architecture.md](docs/architecture.md#data-flow-per-run) for the full
+per-run flow.
+
+**What's the default sync schedule?**
+Hourly, on the hour (`0 0 * * * *`, NCRONTAB with seconds) - the
+`SyncSchedule` app setting on the Function App, changeable without a
+redeploy.
 
 ## Getting started
 
@@ -46,7 +65,13 @@ Built on .NET 10 / C#.
 
 This is a working scaffold: the full pipeline (Paycom pull → field mapping
 → SCIM bulk submission → group reconciliation → run history) builds, has
-unit test coverage on the mapping/rule engines, and is ready to wire up
-against a real Paycom API contract and a real Entra tenant. It has not been
+unit test coverage on the mapping/rule engines and the Paycom client
+(auth, pagination, URL composition), and is ready to wire up against a real
+Entra tenant. The Paycom client's connection mechanics - base URLs, Basic
+Auth, pagination, response envelope, the `employeedirectory` endpoint - are
+confirmed against Paycom's own API Companion Guide; the actual field names
+your tenant's report returns (`CoreFieldAliases`, `StatusValueMap`) are
+still placeholders to replace once you have API access - see
+[docs/paycom-integration.md](docs/paycom-integration.md). Nothing has been
 run against live Paycom or Entra ID services in this environment - validate
 with dry runs before enabling the scheduled trigger in production.

@@ -9,5 +9,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PaycomEntraProvisioner.Core.Tests/PaycomEntraProvisioner.Core.Tests.csproj" />
+    <Project Path="tests/PaycomEntraProvisioner.Paycom.Tests/PaycomEntraProvisioner.Paycom.Tests.csproj" />
   </Folder>
 </Solution>
