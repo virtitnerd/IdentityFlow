@@ -15,11 +15,18 @@
 
 ## Local development
 
-1. `src/PaycomEntraProvisioner.Functions/local.settings.json` and
-   `src/PaycomEntraProvisioner.Web/appsettings.Development.json` both need
-   the same configuration keys - `Paycom:*`, `Entra:*`, `Sql:ConnectionString`,
-   and (Web only) `AzureAd:*`. Never commit real secrets to either file;
-   `local.settings.json` is already gitignored.
+1. `PaycomEntraProvisioner.Functions.csproj` requires `local.settings.json`
+   to exist just to build (Functions tooling copies it to the output
+   directory) - copy the template and fill in your own values:
+   ```
+   cp src/PaycomEntraProvisioner.Functions/local.settings.json.example src/PaycomEntraProvisioner.Functions/local.settings.json
+   ```
+   Do the same conceptually for `src/PaycomEntraProvisioner.Web/appsettings.Development.json`
+   (no template checked in for it since ASP.NET Core doesn't require the
+   file to exist - only add one if you want to override `appsettings.json`
+   locally). Both need the same configuration keys - `Paycom:*`, `Entra:*`,
+   `Sql:ConnectionString`, and (Web only) `AzureAd:*`. Never commit real
+   secrets to either file; both are gitignored.
 2. Apply the initial EF Core migration to your local database:
    ```
    dotnet tool install --global dotnet-ef
