@@ -14,6 +14,24 @@ public sealed class SyncRunStore(ProvisionerDbContext db) : ISyncRunStore
 
     public async Task UpdateAsync(SyncRun run, CancellationToken cancellationToken = default)
     {
+        // The normal path: SyncOrchestrator holds one `run` instance for the
+        // whole pipeline, so by the time UpdateAsync runs, this same
+        // DbContext is already tracking it (CreateAsync added it earlier in
+        // the same scope) and every EmployeeResults.Add(...) call along the
+        // way is already reflected on the tracked instance. Re-querying and
+        // merging in that case is not just redundant - `existing` would be
+        // the SAME object as `run` (EF's identity resolution), making
+        // `existing.EmployeeResults.AddRange(run.EmployeeResults.Where(...))`
+        // mutate a list while enumerating a filtered view of itself, which
+        // throws InvalidOperationException on virtually every real run.
+        if (db.ChangeTracker.Entries<SyncRun>().Any(e => e.Entity.Id == run.Id))
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        // Fallback for a genuinely different DbContext/process updating a
+        // run it didn't create (not the normal path, but kept for safety).
         var existing = await db.SyncRuns
             .Include(x => x.EmployeeResults)
             .FirstOrDefaultAsync(x => x.Id == run.Id, cancellationToken);

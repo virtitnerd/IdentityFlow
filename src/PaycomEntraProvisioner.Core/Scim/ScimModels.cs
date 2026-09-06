@@ -13,7 +13,7 @@ namespace PaycomEntraProvisioner.Core.Scim;
 /// and attribute-mapping rules. Verify the exact field names against the
 /// current Microsoft Learn reference for your tenant's API version before
 /// go-live; this model is intentionally forgiving (extra/unknown properties
-/// round-trip via <see cref="ScimUserResource.AdditionalSchemas"/>).
+/// round-trip via <see cref="ScimUserResource.AdditionalAttributes"/>).
 /// </summary>
 public sealed class ScimBulkRequest
 {
@@ -116,9 +116,6 @@ public sealed class ScimUserResource
 
         AdditionalAttributes[EntraExtensionSchema] = ExtensionAttributes;
     }
-
-    [JsonIgnore]
-    public Dictionary<string, object?> AdditionalSchemas => AdditionalAttributes;
 }
 
 public sealed class ScimName

@@ -41,7 +41,7 @@ public sealed class EntraProvisioningClient(
         var batchErrors = new List<string>();
         var batches = 0;
 
-        foreach (var chunk in Chunk(operations, options.BulkUploadBatchSize))
+        foreach (var chunk in operations.Chunk(options.BulkUploadBatchSize))
         {
             await ThrottleAsync(options, cancellationToken);
             batches++;
@@ -50,21 +50,17 @@ public sealed class EntraProvisioningClient(
             var url = $"{options.GraphBaseUrl}/servicePrincipals/{options.ProvisioningServicePrincipalId}" +
                       $"/synchronization/jobs/{options.ProvisioningJobId}/bulkUpload";
 
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
-            {
-                Content = JsonContent.Create(request)
-            };
-            await AttachTokenAsync(httpRequest, cancellationToken);
-
-            using var response = await httpClient.SendAsync(httpRequest, cancellationToken);
+            using var response = await SendBulkRequestAsync(url, request, cancellationToken);
 
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(options.ThrottleWindowSeconds);
                 logger.LogWarning("Entra bulkUpload throttled; waiting {Delay}.", retryAfter);
                 await Task.Delay(retryAfter, cancellationToken);
-                await AttachTokenAsync(httpRequest, cancellationToken);
-                using var retryResponse = await httpClient.SendAsync(httpRequest, cancellationToken);
+                // A sent HttpRequestMessage can't be resent - build a fresh
+                // one for the retry rather than reusing `httpRequest` above,
+                // which would throw "The request message was already sent."
+                using var retryResponse = await SendBulkRequestAsync(url, request, cancellationToken);
                 await ProcessResponseAsync(retryResponse, chunk, results, batchErrors, cancellationToken);
                 continue;
             }
@@ -73,6 +69,19 @@ public sealed class EntraProvisioningClient(
         }
 
         return new BulkUploadResult(batches, results, batchErrors);
+    }
+
+    private async Task<HttpResponseMessage> SendBulkRequestAsync(
+        string url,
+        ScimBulkRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(request)
+        };
+        await AttachTokenAsync(httpRequest, cancellationToken);
+        return await httpClient.SendAsync(httpRequest, cancellationToken);
     }
 
     private async Task ProcessResponseAsync(
@@ -172,14 +181,6 @@ public sealed class EntraProvisioningClient(
         finally
         {
             _throttleGate.Release();
-        }
-    }
-
-    private static IEnumerable<List<T>> Chunk<T>(IReadOnlyList<T> source, int size)
-    {
-        for (var i = 0; i < source.Count; i += size)
-        {
-            yield return [.. source.Skip(i).Take(size)];
         }
     }
 

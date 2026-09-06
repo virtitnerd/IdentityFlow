@@ -66,12 +66,24 @@ public sealed class PaycomHttpClient(
 
     private static string BuildRequestUri(PaycomClientOptions options, int page)
     {
-        var path = options.EmployeeReportPath.TrimStart('/');
-        var query = new List<string>
+        // EmployeeReportPath may itself already carry a query string (docs
+        // suggest e.g. "api/v1/employeedirectory?eestatus=A" as an
+        // alternative to QueryParameters) - split it off and merge with
+        // "&" instead of always appending a fresh "?", which would produce
+        // a second literal "?" and silently corrupt/drop the pagesize/page
+        // parameters this method exists to add.
+        var rawPath = options.EmployeeReportPath.TrimStart('/');
+        var separatorIndex = rawPath.IndexOf('?');
+        var path = separatorIndex < 0 ? rawPath : rawPath[..separatorIndex];
+
+        var query = new List<string>();
+        if (separatorIndex >= 0 && separatorIndex + 1 < rawPath.Length)
         {
-            $"pagesize={options.PageSize}",
-            $"page={page}"
-        };
+            query.Add(rawPath[(separatorIndex + 1)..]);
+        }
+
+        query.Add($"pagesize={options.PageSize}");
+        query.Add($"page={page}");
 
         foreach (var (key, value) in options.QueryParameters)
         {

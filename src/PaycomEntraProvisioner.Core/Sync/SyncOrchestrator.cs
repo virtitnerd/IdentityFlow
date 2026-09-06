@@ -60,7 +60,7 @@ public sealed class SyncOrchestrator(
             AppendVanishedEmployeeDisableOps(run, employees, previousSnapshots, operations);
 
             await SubmitOperationsAsync(run, operations, dryRun, cancellationToken);
-            await ReconcileGroupsAsync(run, employees, groupRules, dryRun, cancellationToken);
+            await ReconcileGroupsAsync(run, employees, groupRules, mappings, dryRun, cancellationToken);
 
             await snapshotStore.SaveAsync(employees.Select(e => new EmployeeSnapshot
             {
@@ -71,7 +71,14 @@ public sealed class SyncOrchestrator(
                 LastSeenAt = run.StartedAt
             }), cancellationToken);
 
-            run.Status = run.RecordsFailed > 0 ? SyncRunStatus.CompletedWithErrors : SyncRunStatus.Succeeded;
+            // Check every recorded outcome, not just RecordsFailed - group
+            // rule/reconciliation errors set Success = false on their own
+            // SyncRunEmployeeResult but don't increment RecordsFailed, so a
+            // run with only group-side errors would otherwise report as
+            // Succeeded.
+            run.Status = run.EmployeeResults.Any(r => !r.Success)
+                ? SyncRunStatus.CompletedWithErrors
+                : SyncRunStatus.Succeeded;
         }
         catch (Exception ex)
         {
@@ -184,7 +191,6 @@ public sealed class SyncOrchestrator(
                 }
             });
 
-            run.RecordsFailed += 0; // not a failure, just needs attention
             run.EmployeeResults.Add(new SyncRunEmployeeResult
             {
                 SyncRunId = run.Id,
@@ -221,13 +227,15 @@ public sealed class SyncOrchestrator(
             .Where(r => r.BulkId is not null)
             .ToDictionary(r => r.BulkId!, StringComparer.OrdinalIgnoreCase);
 
+        var employeeResultsByCode = run.EmployeeResults
+            .ToDictionary(r => r.EmployeeCode, StringComparer.OrdinalIgnoreCase);
+
         foreach (var op in operations)
         {
-            var employeeResult = run.EmployeeResults.FirstOrDefault(r =>
-                string.Equals(r.EmployeeCode, op.BulkId, StringComparison.OrdinalIgnoreCase));
+            employeeResultsByCode.TryGetValue(op.BulkId, out var employeeResult);
 
             var succeeded = resultsByBulkId.TryGetValue(op.BulkId, out var opResult)
-                && opResult.Status?.Code is "200" or "201" or "204";
+                && opResult.Status?.Code is "200" or "201" or "202" or "204";
 
             if (succeeded)
             {
@@ -259,6 +267,7 @@ public sealed class SyncOrchestrator(
         SyncRun run,
         IReadOnlyList<EmployeeRecord> employees,
         IReadOnlyList<Configuration.GroupAssignmentRule> groupRules,
+        IReadOnlyList<Configuration.FieldMapping> mappings,
         bool dryRun,
         CancellationToken cancellationToken)
     {
@@ -291,11 +300,28 @@ public sealed class SyncOrchestrator(
                 });
             }
 
+            if (evaluation.GroupsToAdd.Count == 0)
+            {
+                continue;
+            }
+
+            // Resolve the same identifier actually submitted to Entra as
+            // userPrincipalName (whatever FieldMapping targets it, with
+            // whatever transform), rather than assuming WorkEmail matches
+            // it - those diverge whenever the admin maps a different/
+            // transformed UPN, which silently made every group lookup
+            // fail (and, combined with a fully-managed group, wiped its
+            // membership) before this fix.
+            var matchingAttributes = mappingEngine.ResolveMatchingAttributes(employee, mappings);
+            var upn = matchingAttributes.GetValueOrDefault("userPrincipalName")
+                ?? matchingAttributes.GetValueOrDefault("username")
+                ?? employee.WorkEmail!;
+
             foreach (var groupId in evaluation.GroupsToAdd)
             {
                 (desiredMembersByGroup.TryGetValue(groupId, out var set)
                     ? set
-                    : desiredMembersByGroup[groupId] = []).Add(employee.WorkEmail!);
+                    : desiredMembersByGroup[groupId] = []).Add(upn);
             }
         }
 
@@ -320,13 +346,46 @@ public sealed class SyncOrchestrator(
             }
 
             var desiredObjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var lookupFailures = new List<string>();
+
             foreach (var upn in desiredUpns)
             {
-                var objectId = await directoryClient.FindUserObjectIdAsync(upn, cancellationToken);
-                if (objectId is not null)
+                try
                 {
-                    desiredObjectIds.Add(objectId);
+                    var objectId = await directoryClient.FindUserObjectIdAsync(upn, cancellationToken);
+                    if (objectId is not null)
+                    {
+                        desiredObjectIds.Add(objectId);
+                    }
                 }
+                catch (Exception ex)
+                {
+                    // Caught here (rather than letting it propagate to the
+                    // outer try/catch in RunAsync) for two reasons: one bad
+                    // lookup shouldn't fail the whole run when bulkUpload
+                    // already succeeded, and - more importantly - silently
+                    // treating a failed lookup the same as "not found" would
+                    // shrink desiredObjectIds and could wipe a fully-managed
+                    // group's entire membership below on a merely transient
+                    // Graph error.
+                    lookupFailures.Add($"{upn}: {ex.Message}");
+                    logger.LogError(ex, "Failed resolving Entra object id for {Upn} while reconciling group {GroupId}", upn, groupId);
+                }
+            }
+
+            if (lookupFailures.Count > 0)
+            {
+                run.EmployeeResults.Add(new SyncRunEmployeeResult
+                {
+                    SyncRunId = run.Id,
+                    EmployeeCode = "(group)",
+                    DisplayName = groupId,
+                    Outcome = "GroupReconciliationError",
+                    Success = false,
+                    Detail = "Skipped reconciling this group this run because one or more member lookups failed " +
+                             $"(retrying next run rather than risk removing members based on an incomplete list): {string.Join("; ", lookupFailures)}"
+                });
+                continue;
             }
 
             if (!fullyManagedGroups.Contains(groupId) && desiredObjectIds.Count == 0)
