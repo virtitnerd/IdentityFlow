@@ -68,6 +68,7 @@ public class IndexModel(
         KnownPaycomFields = knownFieldsTask.Result;
         EntraAttributeSuggestions = [
             .. KnownEntraAttributes.StandardAttributes,
+            .. KnownEntraAttributes.AdditionalWritableAttributes,
             .. KnownEntraAttributes.ExtensionAttributeSlots,
             .. customExtensionsTask.Result
         ];

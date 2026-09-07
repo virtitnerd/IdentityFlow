@@ -85,6 +85,32 @@ as (client credentials) to call Graph.
    `Entra:ClientSecret`, and the **Object ID** (also on the Overview page -
    distinct from the Application/client ID) → `Entra:SyncServiceAppObjectId`.
 
+### Mapping any other Entra attribute
+
+The Field Mappings page's target attribute isn't limited to the handful of
+attributes suggested by autocomplete. `MappingEngine` writes any target
+attribute name it doesn't explicitly recognize (userPrincipalName, name,
+emails, manager, addresses, etc. - the ones needing a specific SCIM
+sub-object shape) as a flat top-level attribute instead, so any standard
+Microsoft Entra ID / Azure AD Connect provisioning-schema attribute -
+`employeeId`, `employeeType`, `employeeHireDate`, `usageLocation`,
+`preferredLanguage`, and others - can be targeted by typing its name, even
+before it's added to any suggestion list.
+
+That said, this app being *willing* to send an attribute doesn't mean
+Entra's provisioning job will *persist* it - the job's own **Attribute
+Mapping** decides what an incoming record is allowed to write, exactly the
+same requirement already noted below for custom directory extensions.
+Before relying on a mapping to a less-common attribute, confirm it's
+listed under **Attribute Mapping → Advanced Options → Edit target User
+attributes** on the provisioning job from step 1, and add it there if not.
+
+`employeeLeaveDateTime` is worth calling out specifically: Microsoft treats
+it as a sensitive attribute requiring an extra one-time consent/role grant
+beyond the standard Graph application permissions above before any app can
+write to it. Verify current Microsoft Learn guidance for the exact grant
+required before mapping to it.
+
 ### Optional: custom directory extension attributes
 
 If you want a Paycom field to land somewhere other than a core attribute

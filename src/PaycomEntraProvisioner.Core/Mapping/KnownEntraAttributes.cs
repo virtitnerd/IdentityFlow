@@ -25,4 +25,41 @@ public static class KnownEntraAttributes
     /// </summary>
     public static readonly IReadOnlyList<string> ExtensionAttributeSlots =
         Enumerable.Range(1, 15).Select(i => $"extensionAttribute{i}").ToArray();
+
+    /// <summary>
+    /// Other standard Microsoft Entra ID / Azure AD Connect provisioning-
+    /// schema attributes with no special SCIM sub-object shape (unlike, say,
+    /// <c>name</c> or <c>emails</c> in <see cref="StandardAttributes"/>).
+    /// <see cref="MappingEngine"/> already writes any target attribute name
+    /// it doesn't explicitly recognize as a flat attribute on the outgoing
+    /// SCIM resource, so nothing here is required for a mapping to work -
+    /// this list exists purely so these commonly-useful attributes show up
+    /// as suggestions instead of having to be typed from memory.
+    ///
+    /// Before relying on any of these, confirm it's also listed on the
+    /// API-driven provisioning job's own Attribute Mapping (Advanced Options
+    /// -&gt; Edit target User attributes) - the same requirement documented
+    /// for custom directory extensions in docs/entra-app-setup.md, since
+    /// Entra's provisioning job (not this app) is what actually decides
+    /// which attributes on an incoming record get written to the directory.
+    /// <c>employeeLeaveDateTime</c> specifically is treated by Microsoft as
+    /// a sensitive attribute requiring an extra one-time consent/role grant
+    /// beyond normal Graph API permissions - verify current Microsoft Learn
+    /// guidance before mapping to it.
+    /// </summary>
+    public static readonly IReadOnlyList<string> AdditionalWritableAttributes =
+    [
+        "employeeId",
+        "employeeType",
+        "employeeHireDate",
+        "employeeLeaveDateTime",
+        "usageLocation",
+        "preferredLanguage",
+        "mailNickname",
+        "userType",
+        "physicalDeliveryOfficeName",
+        "telephoneNumber",
+        "facsimileTelephoneNumber",
+        "showInAddressList"
+    ];
 }

@@ -65,6 +65,33 @@ public class MappingEngineTests
     }
 
     [Fact]
+    public void BuildScimResource_WritesUnrecognizedTargetAttributeAsFlatAttribute()
+    {
+        // The engine must not require every possible Entra target attribute
+        // to have dedicated handling: anything not in AttributeHandlers -
+        // e.g. employeeHireDate, or any other standard/custom attribute
+        // this engine has no special SCIM sub-object shape for - still has
+        // to be settable, just as a flat top-level attribute rather than
+        // one assembled into a typed sub-object like name/emails/manager.
+        var engine = new MappingEngine();
+        var employee = new EmployeeRecord
+        {
+            EmployeeCode = "E100",
+            WorkEmail = "jane.doe@contoso.com",
+            Status = EmploymentStatus.Active,
+            RawFields = new Dictionary<string, string?> { ["Hire_Date"] = "2026-01-15" }
+        };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "Hire_Date", TargetAttribute = "employeeHireDate" }
+        };
+
+        var resource = engine.BuildScimResource(employee, mappings, Today);
+
+        Assert.Equal("2026-01-15", resource.AdditionalAttributes["employeeHireDate"]);
+    }
+
+    [Fact]
     public void BuildScimResource_AppliesTransformExpression()
     {
         var engine = new MappingEngine();
