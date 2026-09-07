@@ -13,9 +13,39 @@ This is the Microsoft-built Enterprise Application that receives the
 2. Open the new application → **Provisioning** → **Get started** → set
    provisioning mode to **Automatic**.
 3. Under **Mappings**, configure **Provision Azure Active Directory Users**:
-   - Set the matching attribute(s) - typically `userPrincipalName` and/or
-     `employeeId`. At least one `FieldMapping` in this app must be flagged
-     `IsMatchingAttribute = true` for the same target attribute.
+   - **Set a matching attribute anchored on `employeeId`, not just `userPrincipalName`.**
+     This is the actual mechanism that prevents Paycom's feed from ever
+     creating a second, duplicate account for someone who already has one -
+     it's Entra's provisioning job, not this app, that decides whether an
+     incoming record is a create or an update to an existing user, and it
+     decides that purely from whichever attribute(s) are configured here as
+     matching. Matching on `userPrincipalName` alone is a real risk: if a
+     worker's UPN ever changes (a legal name change, a typo fix, a domain
+     migration) before this app's next sync reflects that, the provisioning
+     job would see what looks like a brand-new person and create a second
+     account instead of updating the existing one. `employeeId` doesn't
+     change, so anchoring on it avoids that entirely.
+   - This app already sends Paycom's employee code as the SCIM record's
+     `externalId` on *every* record, unconditionally - it's not something a
+     `FieldMapping` can omit or misconfigure. The simplest way to use it:
+     add a mapping row here with source **`externalId`** and target
+     **`employeeId`**, and flag it as a matching attribute. No `FieldMapping`
+     in this app's own Field Mappings page is required for that specific
+     row, since `externalId` is populated in code, not by admin
+     configuration - though `employeeId` is also available as a Field
+     Mapping target now if you'd rather map it explicitly from a Paycom
+     field alongside `externalId` (see docs/architecture.md and the "Mapping
+     any other Entra attribute" section below).
+   - Keep `userPrincipalName` as a *second* matching attribute if you like
+     (Entra supports more than one) - just don't rely on it alone as the
+     only anchor. Whichever attribute(s) you use here, mark the
+     corresponding `FieldMapping` row(s) in this app's Field Mappings page
+     as `IsMatchingAttribute = true` too - that flag doesn't tell Entra
+     anything (Entra's own matching config, set here, is entirely separate
+     and is what actually prevents duplicate accounts), but it's what this
+     app's own group-reconciliation and leaver-task logic uses internally to
+     find the right existing Entra user via Graph, independent of the
+     provisioning job.
    - Add target attributes for anything you'll map from Paycom: standard
      attributes (`displayName`, `department`, `jobTitle`, ...) plus any
      `extensionAttribute1`-`15` or directory schema extensions you want

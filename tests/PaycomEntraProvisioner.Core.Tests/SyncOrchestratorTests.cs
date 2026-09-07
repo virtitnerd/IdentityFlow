@@ -368,6 +368,40 @@ public class SyncOrchestratorTests
     }
 
     [Fact]
+    public async Task RunAsync_PassesConfiguredEmployeeIdMappingToLeaverTaskUserLookup()
+    {
+        // employeeId is the immutable anchor - passing it through lets our
+        // own Graph lookup for leaver tasks still find the right user by a
+        // stable id if their UPN changed since the last run, rather than
+        // depending solely on the (possibly stale) mapped UPN.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var employees = new List<EmployeeRecord>
+        {
+            new()
+            {
+                EmployeeCode = "E1",
+                WorkEmail = "e1@contoso.com",
+                Status = EmploymentStatus.Terminated,
+                TerminationDate = today,
+                RawFields = new Dictionary<string, string?> { ["WorkEmail"] = "e1@contoso.com", ["EmployeeCode"] = "E1" }
+            }
+        };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true },
+            new() { SourceField = "EmployeeCode", TargetAttribute = "employeeId", IsMatchingAttribute = true }
+        };
+        var task = new LifecycleTask { Id = 1, Trigger = LifecycleTrigger.Leaver, TaskType = LifecycleTaskType.RevokeSignInSessions, DayOffset = 0, Enabled = true };
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+
+        var orchestrator = CreateOrchestrator(employees, provisioningClient, directoryClient, mappings: mappings, lifecycleTasks: [task]);
+        await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Contains("E1", directoryClient.LookedUpEmployeeIds);
+    }
+
+    [Fact]
     public async Task RunAsync_DryRun_PreviewsDueLeaverTasksWithoutExecutingThem()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -425,10 +459,12 @@ public class SyncOrchestratorTests
         public bool ThrowOnLookup { get; set; }
         public bool ReconcileWasCalled { get; private set; }
         public List<string> LookedUpUpns { get; } = [];
+        public List<string?> LookedUpEmployeeIds { get; } = [];
 
-        public Task<string?> FindUserObjectIdAsync(string userPrincipalName, CancellationToken cancellationToken = default)
+        public Task<string?> FindUserObjectIdAsync(string userPrincipalName, string? employeeId = null, CancellationToken cancellationToken = default)
         {
             LookedUpUpns.Add(userPrincipalName);
+            LookedUpEmployeeIds.Add(employeeId);
             if (ThrowOnLookup)
             {
                 throw new InvalidOperationException("Simulated transient Graph failure.");

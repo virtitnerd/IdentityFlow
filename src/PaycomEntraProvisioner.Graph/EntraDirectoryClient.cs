@@ -20,18 +20,41 @@ public sealed class EntraDirectoryClient(
     IOptionsMonitor<EntraOptions> optionsMonitor,
     ILogger<EntraDirectoryClient> logger) : IEntraDirectoryClient
 {
-    public async Task<string?> FindUserObjectIdAsync(string userPrincipalName, CancellationToken cancellationToken = default)
+    public async Task<string?> FindUserObjectIdAsync(string userPrincipalName, string? employeeId = null, CancellationToken cancellationToken = default)
     {
         try
         {
             var user = await graphServiceClient.Users[userPrincipalName]
                 .GetAsync(rc => rc.QueryParameters.Select = ["id"], cancellationToken);
-            return user?.Id;
+            if (user?.Id is not null)
+            {
+                return user.Id;
+            }
         }
         catch (ODataError ex) when (ex.ResponseStatusCode == 404)
         {
+            // Fall through to the employeeId lookup below.
+        }
+
+        if (string.IsNullOrWhiteSpace(employeeId))
+        {
             return null;
         }
+
+        // employeeId isn't one of the handful of properties Graph indexes
+        // for a plain $filter - it needs the advanced query opt-in
+        // (ConsistencyLevel: eventual + $count=true) or the service
+        // rejects the filter outright.
+        var escapedEmployeeId = employeeId.Replace("'", "''");
+        var matches = await graphServiceClient.Users.GetAsync(rc =>
+        {
+            rc.QueryParameters.Filter = $"employeeId eq '{escapedEmployeeId}'";
+            rc.QueryParameters.Select = ["id"];
+            rc.QueryParameters.Count = true;
+            rc.Headers.Add("ConsistencyLevel", "eventual");
+        }, cancellationToken);
+
+        return matches?.Value?.FirstOrDefault()?.Id;
     }
 
     public async Task<GroupReconciliationResult> ReconcileGroupMembersAsync(

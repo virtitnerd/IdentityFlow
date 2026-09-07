@@ -16,12 +16,18 @@ public sealed record GroupReconciliationResult(
 public interface IEntraDirectoryClient
 {
     /// <summary>
-    /// Resolves an Entra user object id from the same anchor used for
-    /// provisioning matching (typically userPrincipalName or the employeeId
-    /// extension attribute). Returns null if no matching user exists yet
-    /// (e.g. the provisioning job hasn't created them on this run).
+    /// Resolves an Entra user object id, trying <paramref name="userPrincipalName"/>
+    /// first and falling back to a lookup by <paramref name="employeeId"/>
+    /// (Entra's immutable <c>employeeId</c> directory attribute) when that
+    /// lookup finds no user and an employee id was supplied. The fallback
+    /// exists because this app's own group-reconciliation and leaver-task
+    /// correlation would otherwise lose track of an employee whose UPN
+    /// changed (a name change, a typo fix) in the window before Entra's
+    /// provisioning job has re-synced the new value - employeeId shouldn't
+    /// change, so it survives that window. Returns null if no user matches
+    /// by either anchor (e.g. the provisioning job hasn't created them yet).
     /// </summary>
-    Task<string?> FindUserObjectIdAsync(string userPrincipalName, CancellationToken cancellationToken = default);
+    Task<string?> FindUserObjectIdAsync(string userPrincipalName, string? employeeId = null, CancellationToken cancellationToken = default);
 
     Task<GroupReconciliationResult> ReconcileGroupMembersAsync(
         string groupObjectId,

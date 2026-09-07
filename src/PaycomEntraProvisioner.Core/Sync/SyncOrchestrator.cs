@@ -472,7 +472,7 @@ public sealed class SyncOrchestrator(
         {
             try
             {
-                objectIdsByUpn[upn] = await directoryClient.FindUserObjectIdAsync(upn, cancellationToken);
+                objectIdsByUpn[upn] = await directoryClient.FindUserObjectIdAsync(upn, cancellationToken: cancellationToken);
             }
             catch (Exception ex)
             {
@@ -572,14 +572,16 @@ public sealed class SyncOrchestrator(
             return;
         }
 
-        // Trigger date + best-known UPN for every employee a Leaver task
-        // could apply to: explicitly Terminated this run (using the real
-        // EmployeeRecord to resolve the actual configured UPN), or
-        // vanished from the feed entirely (falling back to the snapshot's
-        // raw work email, the same best-effort limitation the vanished-
-        // employee disable safety net already documents).
+        // Trigger date + best-known UPN (+ employeeId, when a FieldMapping
+        // targets it - see docs/entra-app-setup.md's matching-attribute
+        // guidance) for every employee a Leaver task could apply to:
+        // explicitly Terminated this run (using the real EmployeeRecord to
+        // resolve the actual configured UPN), or vanished from the feed
+        // entirely (falling back to the snapshot's raw work email, the same
+        // best-effort limitation the vanished-employee disable safety net
+        // already documents - a snapshot has no employeeId to fall back on).
         var currentCodes = employees.Select(e => e.EmployeeCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var triggerInfo = new Dictionary<string, (DateOnly TriggerDate, string Upn)>(StringComparer.OrdinalIgnoreCase);
+        var triggerInfo = new Dictionary<string, (DateOnly TriggerDate, string Upn, string? EmployeeId)>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var employee in employees.Where(e => e.Status == EmploymentStatus.Terminated && e.TerminationDate is not null))
         {
@@ -590,7 +592,7 @@ public sealed class SyncOrchestrator(
 
             if (upn is not null)
             {
-                triggerInfo[employee.EmployeeCode] = (employee.TerminationDate!.Value, upn);
+                triggerInfo[employee.EmployeeCode] = (employee.TerminationDate!.Value, upn, matchingAttributes.GetValueOrDefault("employeeId"));
             }
         }
 
@@ -603,7 +605,7 @@ public sealed class SyncOrchestrator(
                 continue;
             }
 
-            triggerInfo[snapshot.EmployeeCode] = (DateOnly.FromDateTime(snapshot.LastSeenAt.UtcDateTime), snapshot.WorkEmail);
+            triggerInfo[snapshot.EmployeeCode] = (DateOnly.FromDateTime(snapshot.LastSeenAt.UtcDateTime), snapshot.WorkEmail, null);
         }
 
         if (triggerInfo.Count == 0)
@@ -645,7 +647,7 @@ public sealed class SyncOrchestrator(
         {
             try
             {
-                objectIdsByCode[code] = await directoryClient.FindUserObjectIdAsync(info.Upn, cancellationToken);
+                objectIdsByCode[code] = await directoryClient.FindUserObjectIdAsync(info.Upn, info.EmployeeId, cancellationToken);
             }
             catch (Exception ex)
             {

@@ -174,7 +174,10 @@ public sealed class MappingEngine
     /// </summary>
     public IReadOnlyDictionary<string, string?> ResolveMatchingAttributes(EmployeeRecord employee, IEnumerable<FieldMapping> mappings)
     {
-        var result = new Dictionary<string, string?>();
+        // Case-insensitive so a lookup like GetValueOrDefault("userPrincipalName")
+        // still finds a mapping the admin entered as "UserPrincipalName" -
+        // TargetAttribute is free text, not validated against a fixed casing.
+        var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var mapping in mappings.Where(m => m.Enabled && m.IsMatchingAttribute))
         {
             result[mapping.TargetAttribute] = ApplyTransform(mapping, ResolveSourceValue(employee, mapping.SourceField), employee);
