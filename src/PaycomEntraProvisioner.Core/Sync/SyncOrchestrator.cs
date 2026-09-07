@@ -25,6 +25,7 @@ public sealed class SyncOrchestrator(
     ISyncRunStore syncRunStore,
     IEmployeeSnapshotStore snapshotStore,
     IDiscoveredFieldStore discoveredFieldStore,
+    ILifecycleTaskStore lifecycleTaskStore,
     MappingEngine mappingEngine,
     GroupRuleEvaluator groupRuleEvaluator,
     ILogger<SyncOrchestrator> logger)
@@ -76,6 +77,7 @@ public sealed class SyncOrchestrator(
             var mappings = await fieldMappingStore.GetAllAsync(cancellationToken);
             var groupRules = await groupRuleStore.GetAllAsync(cancellationToken);
             var previousSnapshots = await snapshotStore.GetAllAsync(cancellationToken);
+            var lifecycleTasks = await lifecycleTaskStore.GetAllAsync(cancellationToken);
             var employees = await employeesTask;
 
             run.EmployeesEvaluated = employees.Count;
@@ -83,11 +85,16 @@ public sealed class SyncOrchestrator(
             var observedFieldNames = employees.SelectMany(e => e.RawFields.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
             await discoveredFieldStore.RecordObservedFieldsAsync(observedFieldNames, run.StartedAt, cancellationToken);
 
-            var operations = BuildBulkOperations(run, employees, mappings);
+            var asOfDate = DateOnly.FromDateTime(run.StartedAt.UtcDateTime);
+            var enableAccountOffset = lifecycleTasks.FirstOrDefault(t => t.Enabled && t.TaskType == LifecycleTaskType.EnableAccount)?.DayOffset ?? 0;
+            var disableAccountOffset = lifecycleTasks.FirstOrDefault(t => t.Enabled && t.TaskType == LifecycleTaskType.DisableAccount)?.DayOffset ?? 0;
+
+            var operations = BuildBulkOperations(run, employees, mappings, asOfDate, enableAccountOffset, disableAccountOffset);
             AppendVanishedEmployeeDisableOps(run, employees, previousSnapshots, operations);
 
             await SubmitOperationsAsync(run, operations, dryRun, cancellationToken);
             await ReconcileGroupsAsync(run, employees, groupRules, mappings, dryRun, cancellationToken);
+            await RunLeaverTasksAsync(run, employees, previousSnapshots, lifecycleTasks, mappings, asOfDate, dryRun, cancellationToken);
 
             await snapshotStore.SaveAsync(employees.Select(e => new EmployeeSnapshot
             {
@@ -196,7 +203,10 @@ public sealed class SyncOrchestrator(
     private List<ScimBulkOperation> BuildBulkOperations(
         SyncRun run,
         IReadOnlyList<EmployeeRecord> employees,
-        IReadOnlyList<Configuration.FieldMapping> mappings)
+        IReadOnlyList<Configuration.FieldMapping> mappings,
+        DateOnly asOfDate,
+        int enableAccountOffset,
+        int disableAccountOffset)
     {
         var operations = new List<ScimBulkOperation>();
 
@@ -221,7 +231,7 @@ public sealed class SyncOrchestrator(
 
             try
             {
-                var resource = mappingEngine.BuildScimResource(employee, mappings);
+                var resource = mappingEngine.BuildScimResource(employee, mappings, asOfDate, enableAccountOffset, disableAccountOffset);
                 operations.Add(new ScimBulkOperation { BulkId = employee.EmployeeCode, Data = resource });
                 run.EmployeeResults.Add(new SyncRunEmployeeResult
                 {
@@ -529,6 +539,193 @@ public sealed class SyncOrchestrator(
                     Detail = string.Join("; ", reconciliation.Errors)
                 });
             }
+        }
+    }
+
+    /// <summary>
+    /// Runs every enabled, one-time Leaver task (revoke sessions, remove
+    /// from groups, delete account - not EnableAccount/DisableAccount,
+    /// which are continuous state handled via the SCIM <c>active</c> flag
+    /// in <see cref="BuildBulkOperations"/> instead) whose configured day
+    /// offset from the employee's termination - or, for a worker who
+    /// vanished from the feed entirely, their last-seen date - has been
+    /// reached. Each (task, employee) pair runs at most once, ever,
+    /// tracked via <see cref="ILifecycleTaskStore"/>.
+    /// </summary>
+    private async Task RunLeaverTasksAsync(
+        SyncRun run,
+        IReadOnlyList<EmployeeRecord> employees,
+        IReadOnlyDictionary<string, EmployeeSnapshot> previousSnapshots,
+        IReadOnlyList<Configuration.LifecycleTask> lifecycleTasks,
+        IReadOnlyList<Configuration.FieldMapping> mappings,
+        DateOnly asOfDate,
+        bool dryRun,
+        CancellationToken cancellationToken)
+    {
+        var oneTimeTasks = lifecycleTasks
+            .Where(t => t.Enabled && t.Trigger == LifecycleTrigger.Leaver
+                        && t.TaskType is not (LifecycleTaskType.EnableAccount or LifecycleTaskType.DisableAccount))
+            .ToList();
+
+        if (oneTimeTasks.Count == 0)
+        {
+            return;
+        }
+
+        // Trigger date + best-known UPN for every employee a Leaver task
+        // could apply to: explicitly Terminated this run (using the real
+        // EmployeeRecord to resolve the actual configured UPN), or
+        // vanished from the feed entirely (falling back to the snapshot's
+        // raw work email, the same best-effort limitation the vanished-
+        // employee disable safety net already documents).
+        var currentCodes = employees.Select(e => e.EmployeeCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var triggerInfo = new Dictionary<string, (DateOnly TriggerDate, string Upn)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var employee in employees.Where(e => e.Status == EmploymentStatus.Terminated && e.TerminationDate is not null))
+        {
+            var matchingAttributes = mappingEngine.ResolveMatchingAttributes(employee, mappings);
+            var upn = matchingAttributes.GetValueOrDefault("userPrincipalName")
+                ?? matchingAttributes.GetValueOrDefault("username")
+                ?? employee.WorkEmail;
+
+            if (upn is not null)
+            {
+                triggerInfo[employee.EmployeeCode] = (employee.TerminationDate!.Value, upn);
+            }
+        }
+
+        foreach (var snapshot in previousSnapshots.Values)
+        {
+            if (currentCodes.Contains(snapshot.EmployeeCode)
+                || triggerInfo.ContainsKey(snapshot.EmployeeCode)
+                || string.IsNullOrWhiteSpace(snapshot.WorkEmail))
+            {
+                continue;
+            }
+
+            triggerInfo[snapshot.EmployeeCode] = (DateOnly.FromDateTime(snapshot.LastSeenAt.UtcDateTime), snapshot.WorkEmail);
+        }
+
+        if (triggerInfo.Count == 0)
+        {
+            return;
+        }
+
+        if (dryRun)
+        {
+            foreach (var task in oneTimeTasks)
+            {
+                var alreadyExecuted = await lifecycleTaskStore.GetSuccessfullyExecutedEmployeeCodesAsync(task.Id, cancellationToken);
+                var due = triggerInfo
+                    .Where(kv => !alreadyExecuted.Contains(kv.Key) && asOfDate >= kv.Value.TriggerDate.AddDays(task.DayOffset))
+                    .Select(kv => kv.Key)
+                    .ToList();
+
+                if (due.Count > 0)
+                {
+                    run.EmployeeResults.Add(new SyncRunEmployeeResult
+                    {
+                        SyncRunId = run.Id,
+                        EmployeeCode = "(lifecycle)",
+                        DisplayName = task.TaskType.ToString(),
+                        Outcome = SyncOutcomes.DryRunLifecyclePreview,
+                        Success = true,
+                        Detail = $"Would run for: {string.Join(", ", due)}"
+                    });
+                }
+            }
+
+            return;
+        }
+
+        // Resolve each employee's object id once, reused across every task
+        // that applies to them, rather than once per task.
+        var objectIdsByCode = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (code, info) in triggerInfo)
+        {
+            try
+            {
+                objectIdsByCode[code] = await directoryClient.FindUserObjectIdAsync(info.Upn, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                objectIdsByCode[code] = null;
+                logger.LogError(ex, "Failed resolving Entra object id for {EmployeeCode} while running leaver tasks", code);
+            }
+        }
+
+        foreach (var task in oneTimeTasks)
+        {
+            var alreadyExecuted = await lifecycleTaskStore.GetSuccessfullyExecutedEmployeeCodesAsync(task.Id, cancellationToken);
+
+            foreach (var (code, info) in triggerInfo)
+            {
+                if (alreadyExecuted.Contains(code) || asOfDate < info.TriggerDate.AddDays(task.DayOffset))
+                {
+                    continue;
+                }
+
+                if (objectIdsByCode.GetValueOrDefault(code) is not { } objectId)
+                {
+                    continue;
+                }
+
+                var (success, detail) = await ExecuteLifecycleTaskAsync(task.TaskType, objectId, cancellationToken);
+
+                await lifecycleTaskStore.RecordExecutionAsync(new LifecycleTaskExecution
+                {
+                    LifecycleTaskId = task.Id,
+                    EmployeeCode = code,
+                    TaskType = task.TaskType,
+                    ExecutedAt = DateTimeOffset.UtcNow,
+                    Success = success,
+                    Detail = detail
+                }, cancellationToken);
+
+                run.EmployeeResults.Add(new SyncRunEmployeeResult
+                {
+                    SyncRunId = run.Id,
+                    EmployeeCode = code,
+                    DisplayName = $"{task.TaskType}: {info.Upn}",
+                    Outcome = success ? SyncOutcomes.LifecycleTaskCompleted : SyncOutcomes.LifecycleTaskError,
+                    Success = success,
+                    Detail = detail
+                });
+            }
+        }
+    }
+
+    private async Task<(bool Success, string Detail)> ExecuteLifecycleTaskAsync(
+        LifecycleTaskType taskType,
+        string objectId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            switch (taskType)
+            {
+                case LifecycleTaskType.RevokeSignInSessions:
+                    await directoryClient.RevokeSignInSessionsAsync(objectId, cancellationToken);
+                    return (true, "Sign-in sessions and refresh tokens revoked.");
+
+                case LifecycleTaskType.RemoveFromAllAssignedGroups:
+                    var cleanup = await directoryClient.RemoveUserFromAllGroupsAsync(objectId, cancellationToken);
+                    return cleanup.Errors.Count == 0
+                        ? (true, $"Removed from {cleanup.GroupsRemovedFrom.Count} assigned group(s).")
+                        : (false, $"Removed from {cleanup.GroupsRemovedFrom.Count} group(s); errors: {string.Join("; ", cleanup.Errors)}");
+
+                case LifecycleTaskType.DeleteAccount:
+                    await directoryClient.DeleteUserAsync(objectId, cancellationToken);
+                    return (true, "Account deleted (Entra soft-deletes for 30 days; recoverable in that window).");
+
+                default:
+                    return (false, $"{taskType} is not a one-time executable task.");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Lifecycle task {TaskType} failed for object {ObjectId}", taskType, objectId);
+            return (false, ex.Message);
         }
     }
 }

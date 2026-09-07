@@ -7,6 +7,8 @@ namespace PaycomEntraProvisioner.Core.Tests;
 
 public class MappingEngineTests
 {
+    private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.UtcNow);
+
     private static EmployeeRecord SampleEmployee() => new()
     {
         EmployeeCode = "E100",
@@ -37,7 +39,7 @@ public class MappingEngineTests
             new() { SourceField = "Last_Name", TargetAttribute = "familyName" },
         };
 
-        var resource = engine.BuildScimResource(SampleEmployee(), mappings);
+        var resource = engine.BuildScimResource(SampleEmployee(), mappings, Today);
 
         Assert.Equal("jane.doe@contoso.com", resource.UserName);
         Assert.Equal("Jane", resource.Name?.GivenName);
@@ -55,7 +57,7 @@ public class MappingEngineTests
             new() { SourceField = "Cost_Center", TargetAttribute = "extensionAttribute1", IsExtensionAttribute = true }
         };
 
-        var resource = engine.BuildScimResource(SampleEmployee(), mappings);
+        var resource = engine.BuildScimResource(SampleEmployee(), mappings, Today);
         resource.FinalizeExtensionSchema();
 
         Assert.Contains(Scim.ScimUserResource.EntraExtensionSchema, resource.Schemas);
@@ -71,7 +73,7 @@ public class MappingEngineTests
             new() { SourceField = "Department_Description", TargetAttribute = "department", TransformExpression = "value.ToUpper()" }
         };
 
-        var resource = engine.BuildScimResource(SampleEmployee(), mappings);
+        var resource = engine.BuildScimResource(SampleEmployee(), mappings, Today);
 
         Assert.Equal("SALES", resource.Department);
     }
@@ -92,7 +94,7 @@ public class MappingEngineTests
             new() { SourceField = "FirstName", TargetAttribute = "givenName" }
         };
 
-        var resource = engine.BuildScimResource(SampleEmployee(), mappings);
+        var resource = engine.BuildScimResource(SampleEmployee(), mappings, Today);
 
         Assert.Null(resource.Name?.GivenName);
     }
@@ -108,8 +110,46 @@ public class MappingEngineTests
             Status = EmploymentStatus.Terminated
         };
 
-        var resource = engine.BuildScimResource(record, []);
+        var resource = engine.BuildScimResource(record, [], Today);
 
         Assert.False(resource.Active);
+    }
+
+    [Fact]
+    public void BuildScimResource_PreHireStaysInactiveUntilHireDatePlusOffset()
+    {
+        var engine = new MappingEngine();
+        var record = new EmployeeRecord
+        {
+            EmployeeCode = "E101",
+            WorkEmail = "new.hire@contoso.com",
+            Status = EmploymentStatus.PreHire,
+            HireDate = Today
+        };
+
+        var beforeOffsetElapsed = engine.BuildScimResource(record, [], Today, enableAccountDayOffset: 3);
+        var afterOffsetElapsed = engine.BuildScimResource(record, [], Today.AddDays(3), enableAccountDayOffset: 3);
+
+        Assert.False(beforeOffsetElapsed.Active);
+        Assert.True(afterOffsetElapsed.Active);
+    }
+
+    [Fact]
+    public void BuildScimResource_TerminatedEmployeeStaysActiveUntilTerminationDatePlusOffset()
+    {
+        var engine = new MappingEngine();
+        var record = new EmployeeRecord
+        {
+            EmployeeCode = "E102",
+            WorkEmail = "leaving.soon@contoso.com",
+            Status = EmploymentStatus.Terminated,
+            TerminationDate = Today
+        };
+
+        var withinNoticePeriod = engine.BuildScimResource(record, [], Today, disableAccountDayOffset: 5);
+        var afterNoticePeriod = engine.BuildScimResource(record, [], Today.AddDays(5), disableAccountDayOffset: 5);
+
+        Assert.True(withinNoticePeriod.Active);
+        Assert.False(afterNoticePeriod.Active);
     }
 }

@@ -35,4 +35,10 @@ public static class SyncOutcomes
     public const string GroupRuleError = "GroupRuleError";
     public const string DryRunGroupPreview = "DryRunGroupPreview";
     public const string GroupReconciliationError = "GroupReconciliationError";
+
+    /// <summary>A one-time <see cref="LifecycleTaskType"/> ran successfully for an employee.</summary>
+    public const string LifecycleTaskCompleted = "LifecycleTaskCompleted";
+
+    public const string LifecycleTaskError = "LifecycleTaskError";
+    public const string DryRunLifecyclePreview = "DryRunLifecyclePreview";
 }

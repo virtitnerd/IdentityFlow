@@ -38,4 +38,33 @@ public interface IEntraDirectoryClient
     /// list (never throws) if Graph is unreachable or none are registered.
     /// </summary>
     Task<IReadOnlyList<string>> GetCustomExtensionAttributeNamesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Revokes every active sign-in session and refresh token for the
+    /// user. Disabling an account alone does not do this - a session or
+    /// refresh token issued beforehand otherwise remains usable until it
+    /// naturally expires.
+    /// </summary>
+    Task RevokeSignInSessionsAsync(string userObjectId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes the user from every assigned (non-dynamic) security group
+    /// they currently belong to. Dynamic-membership groups are skipped
+    /// (Graph rejects a direct member removal from one; membership there
+    /// is Entra's own attribute-driven evaluation to unwind, not this
+    /// call's) - failures on individual groups are collected, not thrown,
+    /// so one ungovernable group doesn't block cleanup of the rest.
+    /// </summary>
+    Task<LeaverGroupCleanupResult> RemoveUserFromAllGroupsAsync(string userObjectId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes the Entra ID user object. Entra soft-deletes for 30 days
+    /// (recoverable in that window via the admin center or Graph), but
+    /// this is otherwise the one genuinely hard-to-reverse action this
+    /// solution can take - callers should only invoke it from a
+    /// deliberately admin-configured <see cref="Domain.LifecycleTaskType.DeleteAccount"/> task.
+    /// </summary>
+    Task DeleteUserAsync(string userObjectId, CancellationToken cancellationToken = default);
 }
+
+public sealed record LeaverGroupCleanupResult(IReadOnlyList<string> GroupsRemovedFrom, IReadOnlyList<string> Errors);

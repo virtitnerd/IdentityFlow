@@ -32,7 +32,10 @@ public class SyncOrchestratorTests
         IEntraDirectoryClient directoryClient,
         IReadOnlyList<GroupAssignmentRule>? groupRules = null,
         IReadOnlyList<FieldMapping>? mappings = null,
-        ISyncRunStore? syncRunStore = null)
+        ISyncRunStore? syncRunStore = null,
+        IReadOnlyList<LifecycleTask>? lifecycleTasks = null,
+        ILifecycleTaskStore? lifecycleTaskStore = null,
+        IReadOnlyDictionary<string, EmployeeSnapshot>? snapshots = null)
     {
         return new SyncOrchestrator(
             new FakePaycomClient(employees),
@@ -41,8 +44,9 @@ public class SyncOrchestratorTests
             new FakeFieldMappingStore(mappings ?? []),
             new FakeGroupAssignmentRuleStore(groupRules ?? []),
             syncRunStore ?? new FakeSyncRunStore(),
-            new FakeEmployeeSnapshotStore(),
+            new FakeEmployeeSnapshotStore(snapshots),
             new FakeDiscoveredFieldStore(),
+            lifecycleTaskStore ?? new FakeLifecycleTaskStore(lifecycleTasks ?? []),
             new MappingEngine(),
             new GroupRuleEvaluator(),
             NullLogger<SyncOrchestrator>.Instance);
@@ -251,6 +255,148 @@ public class SyncOrchestratorTests
         Assert.Equal(SyncOutcomes.Submitted, e1Result.Outcome);
     }
 
+    [Fact]
+    public async Task RunAsync_RunsLeaverTask_ForTerminatedEmployeeOnceOffsetElapses()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var employees = new List<EmployeeRecord>
+        {
+            new()
+            {
+                EmployeeCode = "E1",
+                WorkEmail = "e1@contoso.com",
+                Status = EmploymentStatus.Terminated,
+                TerminationDate = today,
+                RawFields = new Dictionary<string, string?> { ["WorkEmail"] = "e1@contoso.com" }
+            }
+        };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+        var task = new LifecycleTask { Id = 1, Trigger = LifecycleTrigger.Leaver, TaskType = LifecycleTaskType.RevokeSignInSessions, DayOffset = 0, Enabled = true };
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+
+        var orchestrator = CreateOrchestrator(employees, provisioningClient, directoryClient, mappings: mappings, lifecycleTasks: [task]);
+        var run = await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Contains("obj-e1@contoso.com", directoryClient.RevokedSessionsForObjectIds);
+        Assert.Contains(run.EmployeeResults, r => r.EmployeeCode == "E1" && r.Outcome == SyncOutcomes.LifecycleTaskCompleted);
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotRunLeaverTask_BeforeItsDayOffsetElapses()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var employees = new List<EmployeeRecord>
+        {
+            new()
+            {
+                EmployeeCode = "E1",
+                WorkEmail = "e1@contoso.com",
+                Status = EmploymentStatus.Terminated,
+                TerminationDate = today,
+                RawFields = new Dictionary<string, string?> { ["WorkEmail"] = "e1@contoso.com" }
+            }
+        };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+        // Offset far in the future relative to today's termination date - not due yet.
+        var task = new LifecycleTask { Id = 1, Trigger = LifecycleTrigger.Leaver, TaskType = LifecycleTaskType.DeleteAccount, DayOffset = 30, Enabled = true };
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+
+        var orchestrator = CreateOrchestrator(employees, provisioningClient, directoryClient, mappings: mappings, lifecycleTasks: [task]);
+        await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Empty(directoryClient.DeletedObjectIds);
+    }
+
+    [Fact]
+    public async Task RunAsync_NeverRunsTheSameLeaverTaskTwiceForTheSameEmployee()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var employees = new List<EmployeeRecord>
+        {
+            new()
+            {
+                EmployeeCode = "E1",
+                WorkEmail = "e1@contoso.com",
+                Status = EmploymentStatus.Terminated,
+                TerminationDate = today,
+                RawFields = new Dictionary<string, string?> { ["WorkEmail"] = "e1@contoso.com" }
+            }
+        };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+        var task = new LifecycleTask { Id = 1, Trigger = LifecycleTrigger.Leaver, TaskType = LifecycleTaskType.RemoveFromAllAssignedGroups, DayOffset = 0, Enabled = true };
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+        var lifecycleTaskStore = new FakeLifecycleTaskStore([task]);
+
+        var orchestrator1 = CreateOrchestrator(employees, provisioningClient, directoryClient, mappings: mappings, lifecycleTaskStore: lifecycleTaskStore);
+        await orchestrator1.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        var orchestrator2 = CreateOrchestrator(employees, provisioningClient, directoryClient, mappings: mappings, lifecycleTaskStore: lifecycleTaskStore);
+        await orchestrator2.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Single(directoryClient.RemovedFromGroupsForObjectIds);
+    }
+
+    [Fact]
+    public async Task RunAsync_RunsLeaverTask_ForEmployeeThatVanishedFromFeedUsingLastSeenDate()
+    {
+        var lastSeen = DateTimeOffset.UtcNow.AddDays(-10);
+        var snapshots = new Dictionary<string, EmployeeSnapshot>
+        {
+            ["E1"] = new() { EmployeeCode = "E1", WorkEmail = "e1@contoso.com", Status = EmploymentStatus.Active, ContentHash = "h", LastSeenAt = lastSeen }
+        };
+        var task = new LifecycleTask { Id = 1, Trigger = LifecycleTrigger.Leaver, TaskType = LifecycleTaskType.RevokeSignInSessions, DayOffset = 0, Enabled = true };
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+
+        var orchestrator = CreateOrchestrator([], provisioningClient, directoryClient, lifecycleTasks: [task], snapshots: snapshots);
+        var run = await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Contains("obj-e1@contoso.com", directoryClient.RevokedSessionsForObjectIds);
+        Assert.Contains(run.EmployeeResults, r => r.EmployeeCode == "E1" && r.Outcome == SyncOutcomes.LifecycleTaskCompleted);
+    }
+
+    [Fact]
+    public async Task RunAsync_DryRun_PreviewsDueLeaverTasksWithoutExecutingThem()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var employees = new List<EmployeeRecord>
+        {
+            new()
+            {
+                EmployeeCode = "E1",
+                WorkEmail = "e1@contoso.com",
+                Status = EmploymentStatus.Terminated,
+                TerminationDate = today,
+                RawFields = new Dictionary<string, string?> { ["WorkEmail"] = "e1@contoso.com" }
+            }
+        };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+        var task = new LifecycleTask { Id = 1, Trigger = LifecycleTrigger.Leaver, TaskType = LifecycleTaskType.RevokeSignInSessions, DayOffset = 0, Enabled = true };
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+
+        var orchestrator = CreateOrchestrator(employees, provisioningClient, directoryClient, mappings: mappings, lifecycleTasks: [task]);
+        var run = await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: true);
+
+        Assert.Empty(directoryClient.RevokedSessionsForObjectIds);
+        Assert.Contains(run.EmployeeResults, r => r.Outcome == SyncOutcomes.DryRunLifecyclePreview && r.Detail!.Contains("E1"));
+    }
+
     private sealed class FakePaycomClient(IReadOnlyList<EmployeeRecord> employees) : IPaycomClient
     {
         public Task<IReadOnlyList<EmployeeRecord>> GetAllEmployeesAsync(CancellationToken cancellationToken = default) =>
@@ -299,6 +445,28 @@ public class SyncOrchestratorTests
 
         public Task<IReadOnlyList<string>> GetCustomExtensionAttributeNamesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<string>>([]);
+
+        public List<string> RevokedSessionsForObjectIds { get; } = [];
+        public List<string> RemovedFromGroupsForObjectIds { get; } = [];
+        public List<string> DeletedObjectIds { get; } = [];
+
+        public Task RevokeSignInSessionsAsync(string userObjectId, CancellationToken cancellationToken = default)
+        {
+            RevokedSessionsForObjectIds.Add(userObjectId);
+            return Task.CompletedTask;
+        }
+
+        public Task<LeaverGroupCleanupResult> RemoveUserFromAllGroupsAsync(string userObjectId, CancellationToken cancellationToken = default)
+        {
+            RemovedFromGroupsForObjectIds.Add(userObjectId);
+            return Task.FromResult(new LeaverGroupCleanupResult(["grp-1"], []));
+        }
+
+        public Task DeleteUserAsync(string userObjectId, CancellationToken cancellationToken = default)
+        {
+            DeletedObjectIds.Add(userObjectId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeFieldMappingStore(IReadOnlyList<FieldMapping> mappings) : IFieldMappingStore
@@ -367,10 +535,10 @@ public class SyncOrchestratorTests
         }
     }
 
-    private sealed class FakeEmployeeSnapshotStore : IEmployeeSnapshotStore
+    private sealed class FakeEmployeeSnapshotStore(IReadOnlyDictionary<string, EmployeeSnapshot>? seed = null) : IEmployeeSnapshotStore
     {
         public Task<IReadOnlyDictionary<string, EmployeeSnapshot>> GetAllAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyDictionary<string, EmployeeSnapshot>>(new Dictionary<string, EmployeeSnapshot>());
+            Task.FromResult(seed ?? new Dictionary<string, EmployeeSnapshot>());
 
         public Task SaveAsync(IEnumerable<EmployeeSnapshot> snapshots, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
@@ -382,5 +550,45 @@ public class SyncOrchestratorTests
 
         public Task RecordObservedFieldsAsync(IEnumerable<string> fieldNames, DateTimeOffset observedAt, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+    }
+
+    private sealed class FakeLifecycleTaskStore(IReadOnlyList<LifecycleTask> tasks) : ILifecycleTaskStore
+    {
+        private int _nextId = 1;
+        private readonly Dictionary<int, LifecycleTask> _tasks = tasks.ToDictionary(t => t.Id == 0 ? t.Id = -1 : t.Id);
+        private readonly List<LifecycleTaskExecution> _executions = [];
+
+        public Task<IReadOnlyList<LifecycleTask>> GetAllAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LifecycleTask>>([.. _tasks.Values]);
+
+        public Task<LifecycleTask> UpsertAsync(LifecycleTask task, CancellationToken cancellationToken = default)
+        {
+            if (task.Id == 0)
+            {
+                task.Id = _nextId++;
+            }
+
+            _tasks[task.Id] = task;
+            return Task.FromResult(task);
+        }
+
+        public Task DeleteAsync(int id, CancellationToken cancellationToken = default)
+        {
+            _tasks.Remove(id);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlySet<string>> GetSuccessfullyExecutedEmployeeCodesAsync(int taskId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlySet<string>>(
+                _executions.Where(e => e.LifecycleTaskId == taskId && e.Success).Select(e => e.EmployeeCode).ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+        public Task RecordExecutionAsync(LifecycleTaskExecution execution, CancellationToken cancellationToken = default)
+        {
+            _executions.Add(execution);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<LifecycleTaskExecution>> GetRecentExecutionsAsync(int count = 100, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LifecycleTaskExecution>>([.. _executions.OrderByDescending(e => e.ExecutedAt).Take(count)]);
     }
 }

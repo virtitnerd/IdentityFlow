@@ -85,12 +85,43 @@ public sealed class MappingEngine
             || Aliases.Contains(targetAttribute, StringComparer.OrdinalIgnoreCase);
     }
 
-    public ScimUserResource BuildScimResource(EmployeeRecord employee, IEnumerable<FieldMapping> mappings)
+    /// <summary>
+    /// Builds the SCIM resource for one employee.
+    /// </summary>
+    /// <param name="asOfDate">
+    /// Passed in explicitly (rather than read from the clock in here) so
+    /// activation/deactivation timing stays a pure, easily-testable
+    /// function of its inputs.
+    /// </param>
+    /// <param name="enableAccountDayOffset">
+    /// Days relative to <see cref="EmployeeRecord.HireDate"/> at which a
+    /// PreHire worker's account becomes active - 0 means exactly on the
+    /// hire date, negative activates early, positive delays activation.
+    /// Sourced from the admin-configured
+    /// <see cref="Domain.LifecycleTaskType.EnableAccount"/> task; defaults
+    /// to 0 (activate on the hire date, never before) if none is configured.
+    /// </param>
+    /// <param name="disableAccountDayOffset">
+    /// Days relative to <see cref="EmployeeRecord.TerminationDate"/> at
+    /// which a Terminated worker's account is disabled - 0 means exactly
+    /// on the termination date (a real termination date in the future, as
+    /// HR systems commonly enter during a notice period, keeps the account
+    /// active until then rather than disabling it immediately), negative
+    /// disables early, positive grants a short grace period. Sourced from
+    /// the admin-configured <see cref="Domain.LifecycleTaskType.DisableAccount"/>
+    /// task; defaults to 0 if none is configured.
+    /// </param>
+    public ScimUserResource BuildScimResource(
+        EmployeeRecord employee,
+        IEnumerable<FieldMapping> mappings,
+        DateOnly asOfDate,
+        int enableAccountDayOffset = 0,
+        int disableAccountDayOffset = 0)
     {
         var resource = new ScimUserResource
         {
             ExternalId = employee.EmployeeCode,
-            Active = employee.Status is EmploymentStatus.Active or EmploymentStatus.OnLeave or EmploymentStatus.PreHire
+            Active = ComputeActive(employee, asOfDate, enableAccountDayOffset, disableAccountDayOffset)
         };
 
         foreach (var mapping in mappings.Where(m => m.Enabled).OrderBy(m => m.IsExtensionAttribute))
@@ -109,6 +140,31 @@ public sealed class MappingEngine
         resource.FinalizeExtensionSchema();
         return resource;
     }
+
+    private static bool ComputeActive(EmployeeRecord employee, DateOnly asOfDate, int enableAccountDayOffset, int disableAccountDayOffset) =>
+        employee.Status switch
+        {
+            EmploymentStatus.Active or EmploymentStatus.OnLeave => true,
+
+            // Not active until the configured offset from the hire date -
+            // a worker entered in Paycom weeks ahead of their first day
+            // should be created (so IT can pre-stage access) but stay
+            // disabled until it's actually their start date.
+            EmploymentStatus.PreHire => employee.HireDate is { } hireDate
+                && asOfDate >= hireDate.AddDays(enableAccountDayOffset),
+
+            // Stays active until the configured offset from the
+            // termination date, not the moment the status changes - HR
+            // systems commonly record a termination during a notice
+            // period with a future last day, and disabling immediately
+            // would cut access before that day actually arrives. No
+            // termination date at all is treated as "disable now" - the
+            // safer direction to guess wrong in.
+            EmploymentStatus.Terminated => employee.TerminationDate is { } terminationDate
+                && asOfDate < terminationDate.AddDays(disableAccountDayOffset),
+
+            _ => false
+        };
 
     /// <summary>
     /// Returns the identity anchor values (matching attributes) for an

@@ -12,6 +12,8 @@ public sealed class ProvisionerDbContext(DbContextOptions<ProvisionerDbContext> 
     public DbSet<SyncRunEmployeeResult> SyncRunEmployeeResults => Set<SyncRunEmployeeResult>();
     public DbSet<EmployeeSnapshot> EmployeeSnapshots => Set<EmployeeSnapshot>();
     public DbSet<DiscoveredSourceField> DiscoveredSourceFields => Set<DiscoveredSourceField>();
+    public DbSet<LifecycleTask> LifecycleTasks => Set<LifecycleTask>();
+    public DbSet<LifecycleTaskExecution> LifecycleTaskExecutions => Set<LifecycleTaskExecution>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

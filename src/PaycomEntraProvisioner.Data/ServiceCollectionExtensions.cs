@@ -20,6 +20,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISyncRunStore, SyncRunStore>();
         services.AddScoped<IEmployeeSnapshotStore, EmployeeSnapshotStore>();
         services.AddScoped<IDiscoveredFieldStore, DiscoveredFieldStore>();
+        services.AddScoped<ILifecycleTaskStore, LifecycleTaskStore>();
 
         return services;
     }

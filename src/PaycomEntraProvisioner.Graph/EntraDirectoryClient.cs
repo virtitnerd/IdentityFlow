@@ -82,6 +82,67 @@ public sealed class EntraDirectoryClient(
         return new GroupReconciliationResult(groupObjectId, added, removed, errors);
     }
 
+    public async Task RevokeSignInSessionsAsync(string userObjectId, CancellationToken cancellationToken = default)
+    {
+        await graphServiceClient.Users[userObjectId].RevokeSignInSessions.PostAsRevokeSignInSessionsPostResponseAsync(cancellationToken: cancellationToken);
+    }
+
+    public async Task<LeaverGroupCleanupResult> RemoveUserFromAllGroupsAsync(string userObjectId, CancellationToken cancellationToken = default)
+    {
+        var removed = new List<string>();
+        var errors = new List<string>();
+
+        try
+        {
+            var page = await graphServiceClient.Users[userObjectId].MemberOf
+                .GetAsync(rc => rc.QueryParameters.Select = ["id", "groupTypes", "membershipRule"], cancellationToken);
+
+            var groupIds = new List<string>();
+            var iterator = PageIterator<DirectoryObject, DirectoryObjectCollectionResponse>
+                .CreatePageIterator(graphServiceClient, page!, member =>
+                {
+                    // Only assigned (non-dynamic) security groups can have a
+                    // member removed directly - Graph rejects that call for
+                    // a dynamic-membership group, since membership there is
+                    // computed, not stored.
+                    if (member is Group { MembershipRule: null } group && group.Id is not null)
+                    {
+                        groupIds.Add(group.Id);
+                    }
+
+                    return true;
+                });
+
+            await iterator.IterateAsync(cancellationToken);
+
+            foreach (var groupId in groupIds)
+            {
+                try
+                {
+                    await graphServiceClient.Groups[groupId].Members[userObjectId].Ref.DeleteAsync(cancellationToken: cancellationToken);
+                    removed.Add(groupId);
+                }
+                catch (ODataError ex)
+                {
+                    errors.Add($"Failed removing from group {groupId}: {ex.Error?.Message}");
+                    logger.LogError(ex, "Failed removing user {UserId} from group {GroupId} during leaver cleanup", userObjectId, groupId);
+                }
+            }
+        }
+        catch (ODataError ex)
+        {
+            errors.Add($"Failed reading group memberships for {userObjectId}: {ex.Error?.Message}");
+            logger.LogError(ex, "Failed reading group memberships for {UserId} during leaver cleanup", userObjectId);
+        }
+
+        return new LeaverGroupCleanupResult(removed, errors);
+    }
+
+    public async Task DeleteUserAsync(string userObjectId, CancellationToken cancellationToken = default)
+    {
+        await graphServiceClient.Users[userObjectId].DeleteAsync(cancellationToken: cancellationToken);
+    }
+
     public async Task<IReadOnlyList<string>> GetCustomExtensionAttributeNamesAsync(CancellationToken cancellationToken = default)
     {
         var appObjectId = optionsMonitor.CurrentValue.SyncServiceAppObjectId;

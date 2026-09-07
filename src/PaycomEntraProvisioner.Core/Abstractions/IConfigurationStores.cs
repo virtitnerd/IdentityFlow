@@ -57,3 +57,22 @@ public interface IDiscoveredFieldStore
     /// <summary>Upserts each field name's first/last-seen timestamp for this run.</summary>
     Task RecordObservedFieldsAsync(IEnumerable<string> fieldNames, DateTimeOffset observedAt, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Admin-configured joiner/leaver policy (see <see cref="LifecycleTask"/>) plus its execution audit trail.</summary>
+public interface ILifecycleTaskStore
+{
+    Task<IReadOnlyList<LifecycleTask>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<LifecycleTask> UpsertAsync(LifecycleTask task, CancellationToken cancellationToken = default);
+    Task DeleteAsync(int id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Employee codes that already have a successful execution recorded
+    /// for this task - the idempotency check consulted before running a
+    /// one-time task again for the same employee.
+    /// </summary>
+    Task<IReadOnlySet<string>> GetSuccessfullyExecutedEmployeeCodesAsync(int taskId, CancellationToken cancellationToken = default);
+
+    Task RecordExecutionAsync(LifecycleTaskExecution execution, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<LifecycleTaskExecution>> GetRecentExecutionsAsync(int count = 100, CancellationToken cancellationToken = default);
+}

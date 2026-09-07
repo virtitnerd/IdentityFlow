@@ -1,0 +1,120 @@
+@page
+@using PaycomEntraProvisioner.Core.Domain
+@model PaycomEntraProvisioner.Web.Pages.LifecyclePolicy.IndexModel
+@{
+    ViewData["Title"] = "Lifecycle Policy";
+}
+
+<h1>Lifecycle Policy</h1>
+<p class="text-muted">
+    Configures what this pipeline does automatically when a worker joins or leaves, and how many days
+    to wait relative to their hire or termination date before doing it - the same "days from event"
+    model as Entra ID Governance Lifecycle Workflows. This lets an org line its account handling up with
+    its own NIST/STIG/HIPAA baseline or data/account retention policy, but <strong>this tool does not
+    certify or attest compliance with any framework</strong> - it only gives you a configurable mechanism;
+    whether the configuration you choose actually satisfies your org's obligations is a decision for
+    whoever owns that compliance program.
+</p>
+<ul class="text-muted small">
+    <li><strong>EnableAccount</strong> / <strong>DisableAccount</strong> (Joiner / Leaver) aren't one-time
+        actions - they control the SCIM <code>active</code> flag continuously, every run. Their day offset
+        delays activation past <code>HireDate</code> for a not-yet-started new hire, or delays deactivation
+        past <code>TerminationDate</code> to cover a notice period.</li>
+    <li><strong>RevokeSignInSessions</strong>, <strong>RemoveFromAllAssignedGroups</strong>, and
+        <strong>DeleteAccount</strong> (Leaver only) are one-time actions: each runs at most once per
+        employee, ever, once its day offset from termination (or last-seen date, for a worker who simply
+        vanishes from the Paycom feed) has passed.</li>
+    <li><strong>DeleteAccount</strong> is destructive (Entra soft-deletes for a recoverable 30-day window
+        only) - leave it disabled unless your retention policy calls for actual deletion after a defined
+        number of days, not just disablement.</li>
+</ul>
+
+<table class="table table-striped align-middle">
+    <thead>
+        <tr>
+            <th>Trigger</th>
+            <th>Task</th>
+            <th>Day offset</th>
+            <th>Enabled</th>
+            <th>Notes</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var task in Model.Tasks)
+        {
+            <tr>
+                <td>@task.Trigger</td>
+                <td>@task.TaskType</td>
+                <td>@task.DayOffset</td>
+                <td>@(task.Enabled ? "Yes" : "No")</td>
+                <td>@task.Notes</td>
+                <td>
+                    <form method="post" asp-page-handler="Delete" asp-route-id="@task.Id"
+                          onsubmit="return confirm('Delete this lifecycle task?');">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h2 class="h4 mt-4">Add or update a task</h2>
+<p class="text-muted small">
+    At most one task per (Trigger, Task) pair - saving a task with the same combination as an existing
+    row replaces its offset/enabled/notes rather than creating a duplicate.
+</p>
+<form method="post" asp-page-handler="Save" class="row g-3">
+    <input type="hidden" asp-for="Input.Id" />
+    <div class="col-md-3">
+        <label class="form-label" asp-for="Input.Trigger">Trigger</label>
+        <select class="form-select" asp-for="Input.Trigger" asp-items="Html.GetEnumSelectList<LifecycleTrigger>()"></select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label" asp-for="Input.TaskType">Task</label>
+        <select class="form-select" asp-for="Input.TaskType" asp-items="Html.GetEnumSelectList<LifecycleTaskType>()"></select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label" asp-for="Input.DayOffset">Day offset</label>
+        <input class="form-control" asp-for="Input.DayOffset" type="number" />
+    </div>
+    <div class="col-md-4">
+        <label class="form-label" asp-for="Input.Notes">Notes</label>
+        <input class="form-control" asp-for="Input.Notes" placeholder="e.g. HIPAA 90-day retention before deletion" />
+    </div>
+    <div class="col-12">
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.Enabled" checked />
+            <label class="form-check-label" asp-for="Input.Enabled">Enabled</label>
+        </div>
+    </div>
+    <div class="col-12">
+        <button type="submit" class="btn btn-primary">Save task</button>
+    </div>
+</form>
+
+<h2 class="h4 mt-5">Recent lifecycle task executions</h2>
+<table class="table table-striped align-middle">
+    <thead>
+        <tr>
+            <th>Executed at</th>
+            <th>Employee code</th>
+            <th>Task</th>
+            <th>Success</th>
+            <th>Detail</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var execution in Model.RecentExecutions)
+        {
+            <tr>
+                <td>@execution.ExecutedAt.ToString("u")</td>
+                <td>@execution.EmployeeCode</td>
+                <td>@execution.TaskType</td>
+                <td>@(execution.Success ? "Yes" : "No")</td>
+                <td>@execution.Detail</td>
+            </tr>
+        }
+    </tbody>
+</table>

@@ -83,21 +83,24 @@ need to touch it at all.
   the Microsoft Graph SDK).
 - **PaycomEntraProvisioner.Data** - EF Core (Azure SQL) persistence for
   field mappings, group rules, sync run history, employee snapshots
-  (used to detect a worker vanishing from the Paycom feed entirely), and a
+  (used to detect a worker vanishing from the Paycom feed entirely), a
   catalog of Paycom field names actually observed across runs - the admin
   UI uses it (plus a static list of standard Entra attributes and a live
   Graph lookup of registered custom directory extensions) to offer
   autocomplete suggestions on the Field Mappings page rather than requiring
-  the source/target field names to be typed from memory.
+  the source/target field names to be typed from memory - and the
+  configurable Lifecycle Policy tasks plus their per-employee execution
+  history (see **Lifecycle Policy Engine** below).
 - **PaycomEntraProvisioner.Functions** - Azure Functions isolated worker.
   `TimerSync` runs the pipeline on a configurable NCRONTAB schedule;
   `ManualSync` is a function-key-secured HTTP entry point for automation.
 - **PaycomEntraProvisioner.Web** - Razor Pages admin/monitoring UI, secured
   with Entra ID sign-in (a separate, minimally-privileged app registration
   from the one used for Graph calls). Dashboard, sync history with
-  per-employee drill-down, and CRUD for field mappings and group rules. Its
-  "Run Now" button calls `SyncOrchestrator` in-process (same DI graph, same
-  code path as the Function) rather than making a network call.
+  per-employee drill-down, and CRUD for field mappings, group rules, and
+  Lifecycle Policy tasks (plus their execution history). Its "Run Now"
+  button calls `SyncOrchestrator` in-process (same DI graph, same code
+  path as the Function) rather than making a network call.
 
 ## Data flow per run
 
@@ -141,10 +144,12 @@ first-time validation of new field mappings or group rules.
      authenticate admins into the Razor Pages site.
   2. **Sync service** app - application (client-credentials) permissions:
      the provisioning job's `SynchronizationData-User.Upload` app role,
-     plus `User.Read.All` and `Group.ReadWrite.All` for directory lookups
-     and assigned-group reconciliation. Used server-side only (by the
-     Function and by the Web app's in-process orchestrator call) - never
-     exposed to a browser.
+     plus `Group.ReadWrite.All` for directory lookups and assigned-group
+     reconciliation, and `User.ReadWrite.All` (only strictly needed for the
+     Lifecycle Policy Engine's `RevokeSignInSessions`/`DeleteAccount`
+     leaver tasks - `User.Read.All` is enough if those two task types stay
+     disabled). Used server-side only (by the Function and by the Web
+     app's in-process orchestrator call) - never exposed to a browser.
 - All secrets (Paycom credentials, the sync app's client secret, the SQL
   connection string) live in Key Vault; app settings reference them via
   `@Microsoft.KeyVault(...)`, never inline.
@@ -201,6 +206,67 @@ for that run; a `Submitted` result appearing on more than one or two
 consecutive future runs' reconciliation passes without resolving is worth
 investigating directly (a wrong matching attribute, a provisioning job
 that's paused, etc.).
+
+## Lifecycle Policy Engine
+
+Different organizations need materially different Joiner/Leaver behavior
+for the same underlying event - a HIPAA-covered org might require an
+account to survive 90 days past termination before deletion (for records-
+retention reasons), while another wants sessions revoked and group
+memberships stripped the same day. Rather than hard-coding one policy,
+`LifecycleTask` (Admin Portal: **Lifecycle Policy**) lets an admin configure,
+per `LifecycleTrigger` (`Joiner`/`Leaver`) and `LifecycleTaskType`, whether a
+task is enabled and how many days to offset it from the triggering event
+date - the same "days from event" trigger model
+[Entra ID Governance Lifecycle Workflows](https://learn.microsoft.com/entra/id-governance/what-are-lifecycle-workflows)
+uses natively, scoped down to what this pipeline can actually execute
+against Paycom-sourced data rather than the full Lifecycle Workflows
+template/task catalog. This is a configurable *mechanism*, not a compliance
+certification - nothing in this solution asserts that a given configuration
+satisfies NIST, a specific STIG, or HIPAA; that determination belongs to
+whoever owns the org's compliance program.
+
+Two task types are **continuous state**, not one-time actions, and are
+evaluated fresh on every run rather than tracked as "done":
+
+- `EnableAccount` (Joiner) - `MappingEngine.ComputeActive` holds a
+  `PreHire` worker's SCIM `active` flag `false` until
+  `HireDate + DayOffset` has been reached, so a new hire entered into
+  Paycom ahead of their start date doesn't get a live, sign-in-capable
+  account before day one.
+- `DisableAccount` (Leaver) - symmetrically, a `Terminated` worker's
+  `active` flag stays `true` until `TerminationDate + DayOffset`, covering
+  an org's notice-period policy (e.g. access continues through a 2-week
+  notice period) instead of disabling the instant the status flips.
+
+The remaining `Leaver`-only task types are **one-time actions**, executed
+by `SyncOrchestrator.RunLeaverTasksAsync` and tracked per (task, employee)
+in `LifecycleTaskExecution` so each runs *at most once, ever* per employee -
+idempotent even if a task's due date is reached across several consecutive
+runs before it's picked up:
+
+- `RevokeSignInSessions` - `POST /users/{id}/revokeSignInSessions`. Disabling
+  an account (`accountEnabled: false`) does **not** invalidate already-issued
+  refresh tokens or active sessions on its own; this is the explicit action
+  that does.
+- `RemoveFromAllAssignedGroups` - walks the user's `memberOf`, skips any
+  group with a `membershipRule` (dynamic groups self-correct once the
+  disabling sync runs - removing a member from one directly would just be
+  overwritten), and removes assigned-group memberships directly.
+- `DeleteAccount` - `DELETE /users/{id}`. Off by default and expected to
+  stay off unless an org's retention policy calls for actual deletion after
+  a defined number of days (Entra soft-deletes for a recoverable 30-day
+  window regardless). Kept as a distinct, separately-enableable task from
+  disablement specifically so "disable now, delete later" retention windows
+  are expressible without extra code.
+
+The trigger date for a one-time task is the employee's `TerminationDate`
+when Paycom explicitly reports them `Terminated`, or - for a worker who
+simply vanishes from the feed without ever being marked `Terminated` - the
+same last-seen-date fallback the vanished-employee auto-disable safety net
+already uses. A `dryRun` run previews which (task, employee) pairs are due
+without executing or recording anything, mirroring how dry runs behave
+elsewhere in this pipeline.
 
 ## Other design decisions the same research validated or challenged
 

@@ -43,8 +43,16 @@ as (client credentials) to call Graph.
    first deployment).
 3. **API permissions** → **Add a permission** → **Microsoft Graph** →
    **Application permissions**, add:
-   - `User.Read.All` (resolve users for group reconciliation)
-   - `Group.ReadWrite.All` (assigned-group membership reconciliation)
+   - `User.ReadWrite.All` (resolving users for group reconciliation only
+     needs read access, but the Lifecycle Policy Engine's `RevokeSignInSessions`
+     and `DeleteAccount` leaver tasks call `POST /users/{id}/revokeSignInSessions`
+     and `DELETE /users/{id}`, both of which require write. If your org's
+     leaver policy only ever removes group memberships and never revokes
+     sessions or deletes accounts, `User.Read.All` is sufficient instead -
+     leave those two task types disabled in the Admin Portal's Lifecycle
+     Policy page in that case.)
+   - `Group.ReadWrite.All` (assigned-group membership reconciliation and the
+     `RemoveFromAllAssignedGroups` leaver task)
    - `Application.Read.All` (optional - lets the admin UI list this app's
      own registered custom directory extension attributes as target-field
      suggestions; the Field Mappings page works without it, just without
