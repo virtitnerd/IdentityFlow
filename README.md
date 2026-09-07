@@ -1,5 +1,7 @@
 # Paycom → Entra ID Provisioner
 
+[![CI](https://github.com/virtitnerd/Paycom-Entra-Provisioner/actions/workflows/ci.yml/badge.svg)](https://github.com/virtitnerd/Paycom-Entra-Provisioner/actions/workflows/ci.yml)
+
 An in-house solution that replaces manual "get a new-hire email from HR,
 go create the Entra ID account by hand" with an automated pipeline: pull
 current worker data from Paycom, map it onto Entra ID users (including
