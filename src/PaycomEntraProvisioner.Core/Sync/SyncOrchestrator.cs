@@ -29,12 +29,32 @@ public sealed class SyncOrchestrator(
     GroupRuleEvaluator groupRuleEvaluator,
     ILogger<SyncOrchestrator> logger)
 {
+    /// <summary>
+    /// How far back to look in the provisioning audit log when confirming
+    /// previously-submitted records. Generous on purpose (comfortably
+    /// covers a missed run or a slow provisioning cycle over a weekend)
+    /// since the log read is skipped entirely when nothing is pending -
+    /// a wide window costs nothing extra in the common case.
+    /// </summary>
+    private const int ProvisioningLogLookbackHours = 72;
+
     public async Task<SyncRun> RunAsync(
         SyncTrigger trigger,
         string? triggeredByUser,
         bool dryRun,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            await ReconcilePendingProvisioningConfirmationsAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Confirming prior runs' outcomes is a correction, not a
+            // precondition - never let it block this run from proceeding.
+            logger.LogWarning(ex, "Failed to reconcile pending provisioning confirmations from a previous run; will retry next run.");
+        }
+
         var run = new SyncRun
         {
             StartedAt = DateTimeOffset.UtcNow,
@@ -102,6 +122,77 @@ public sealed class SyncOrchestrator(
         return run;
     }
 
+    /// <summary>
+    /// Confirms records left <see cref="SyncOutcomes.Submitted"/> by a
+    /// previous run against the Entra provisioning audit log - the
+    /// authoritative source for per-record outcomes, per Microsoft's own
+    /// reference implementation (see docs/architecture.md). Skips the
+    /// Graph call entirely when nothing is pending, which is the steady
+    /// state once confirmations catch up.
+    /// </summary>
+    private async Task ReconcilePendingProvisioningConfirmationsAsync(CancellationToken cancellationToken)
+    {
+        var pending = await syncRunStore.GetPendingSubmissionResultsAsync(cancellationToken);
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        var logEntries = await provisioningClient.GetRecentProvisioningLogAsync(
+            top: 500,
+            since: DateTimeOffset.UtcNow.AddHours(-ProvisioningLogLookbackHours),
+            cancellationToken: cancellationToken);
+
+        if (logEntries.Count == 0)
+        {
+            return;
+        }
+
+        // Last-write-wins per employee code, in case the log has more than
+        // one entry for the same record in the window (e.g. a retry on
+        // Entra's own side).
+        var latestByEmployeeCode = new Dictionary<string, ProvisioningLogEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in logEntries)
+        {
+            if (entry.EmployeeExternalId is not { } code)
+            {
+                continue;
+            }
+
+            if (!latestByEmployeeCode.TryGetValue(code, out var existing) || entry.Timestamp > existing.Timestamp)
+            {
+                latestByEmployeeCode[code] = entry;
+            }
+        }
+
+        var updates = new List<ProvisioningConfirmationUpdate>();
+        foreach (var result in pending)
+        {
+            if (!latestByEmployeeCode.TryGetValue(result.EmployeeCode, out var logEntry))
+            {
+                // Not in the log yet - the provisioning cycle likely hasn't
+                // processed it. Leave it Submitted; the next run tries again.
+                continue;
+            }
+
+            updates.Add(logEntry.ProvisioningStatus switch
+            {
+                var s when s.Contains("success", StringComparison.OrdinalIgnoreCase) =>
+                    new ProvisioningConfirmationUpdate(result.Id, true, SyncOutcomes.Provisioned, $"Confirmed by the provisioning log: {logEntry.Action}."),
+                var s when s.Contains("skip", StringComparison.OrdinalIgnoreCase) =>
+                    new ProvisioningConfirmationUpdate(result.Id, true, SyncOutcomes.ProvisioningSkipped, "Entra's provisioning job determined no change was needed."),
+                var s =>
+                    new ProvisioningConfirmationUpdate(result.Id, false, SyncOutcomes.SubmissionError, logEntry.ErrorMessage ?? $"Provisioning log reported status '{s}'.")
+            });
+        }
+
+        if (updates.Count > 0)
+        {
+            await syncRunStore.ApplyProvisioningConfirmationsAsync(updates, cancellationToken);
+            logger.LogInformation("Reconciled {Count} pending submission(s) against the provisioning audit log.", updates.Count);
+        }
+    }
+
     private List<ScimBulkOperation> BuildBulkOperations(
         SyncRun run,
         IReadOnlyList<EmployeeRecord> employees,
@@ -121,7 +212,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = employee.EmployeeCode,
                     DisplayName = displayName,
-                    Outcome = "Skipped",
+                    Outcome = SyncOutcomes.Skipped,
                     Success = true,
                     Detail = $"No work email present (status: {employee.Status}); cannot match to an Entra user."
                 });
@@ -137,7 +228,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = employee.EmployeeCode,
                     DisplayName = displayName,
-                    Outcome = run.DryRun ? "DryRunPreview" : "Queued",
+                    Outcome = run.DryRun ? SyncOutcomes.DryRunPreview : SyncOutcomes.Submitted,
                     Success = true,
                     Detail = $"active={resource.Active}"
                 });
@@ -150,7 +241,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = employee.EmployeeCode,
                     DisplayName = displayName,
-                    Outcome = "MappingError",
+                    Outcome = SyncOutcomes.MappingError,
                     Success = false,
                     Detail = ex.Message
                 });
@@ -203,7 +294,7 @@ public sealed class SyncOrchestrator(
                 SyncRunId = run.Id,
                 EmployeeCode = snapshot.EmployeeCode,
                 DisplayName = snapshot.WorkEmail,
-                Outcome = "VanishedFromFeed-AutoDisabled",
+                Outcome = SyncOutcomes.VanishedFromFeedAutoDisabled,
                 Success = true,
                 Detail = "Employee was present in a previous sync but absent from this Paycom pull with no Terminated status. " +
                          "Queued a defensive disable; verify this against Paycom before the next run."
@@ -240,24 +331,31 @@ public sealed class SyncOrchestrator(
         foreach (var op in operations)
         {
             employeeResultsByCode.TryGetValue(op.BulkId, out var employeeResult);
+            resultsByBulkId.TryGetValue(op.BulkId, out var opResult);
+            var code = opResult?.Status?.Code;
 
-            var succeeded = resultsByBulkId.TryGetValue(op.BulkId, out var opResult)
-                && opResult.Status?.Code is "200" or "201" or "202" or "204";
-
-            if (succeeded)
+            if (code is "200" or "201" or "202" or "204" or null)
             {
+                // A missing per-op result is the *expected* case, not a
+                // failure: Microsoft's own reference implementation doesn't
+                // treat bulkUpload's synchronous response as a reliable
+                // per-record result either (see docs/architecture.md) - it
+                // stays Submitted and gets confirmed or corrected by
+                // ReconcilePendingProvisioningConfirmationsAsync on a later
+                // run, once the provisioning audit log has caught up.
                 run.RecordsSubmitted++;
             }
             else
             {
+                // Entra told us synchronously and explicitly that this
+                // specific record failed - a real signal worth trusting
+                // immediately rather than waiting a cycle to confirm.
                 run.RecordsFailed++;
                 if (employeeResult is not null)
                 {
                     employeeResult.Success = false;
-                    employeeResult.Outcome = "SubmissionError";
-                    employeeResult.Detail = opResult?.Status?.Code is { } code
-                        ? $"Entra returned status {code}"
-                        : "No result returned for this bulkId - see provisioning logs in the Entra admin center.";
+                    employeeResult.Outcome = SyncOutcomes.SubmissionError;
+                    employeeResult.Detail = $"Entra returned status {code}";
                 }
             }
         }
@@ -301,7 +399,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = employee.EmployeeCode,
                     DisplayName = $"{employee.FirstName} {employee.LastName}".Trim(),
-                    Outcome = "GroupRuleError",
+                    Outcome = SyncOutcomes.GroupRuleError,
                     Success = false,
                     Detail = error.Message
                 });
@@ -344,7 +442,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = "(group)",
                     DisplayName = groupId,
-                    Outcome = "DryRunGroupPreview",
+                    Outcome = SyncOutcomes.DryRunGroupPreview,
                     Success = true,
                     Detail = $"{desiredUpns.Count} employee(s) currently match rules targeting this group."
                 });
@@ -392,7 +490,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = "(group)",
                     DisplayName = groupId,
-                    Outcome = "GroupReconciliationError",
+                    Outcome = SyncOutcomes.GroupReconciliationError,
                     Success = false,
                     Detail = "Skipped reconciling this group this run because one or more member lookups failed " +
                              "(retrying next run rather than risk removing members based on an incomplete list): " +
@@ -426,7 +524,7 @@ public sealed class SyncOrchestrator(
                     SyncRunId = run.Id,
                     EmployeeCode = "(group)",
                     DisplayName = groupId,
-                    Outcome = "GroupReconciliationError",
+                    Outcome = SyncOutcomes.GroupReconciliationError,
                     Success = false,
                     Detail = string.Join("; ", reconciliation.Errors)
                 });

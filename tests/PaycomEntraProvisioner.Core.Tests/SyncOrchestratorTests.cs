@@ -31,7 +31,8 @@ public class SyncOrchestratorTests
         IEntraProvisioningClient provisioningClient,
         IEntraDirectoryClient directoryClient,
         IReadOnlyList<GroupAssignmentRule>? groupRules = null,
-        IReadOnlyList<FieldMapping>? mappings = null)
+        IReadOnlyList<FieldMapping>? mappings = null,
+        ISyncRunStore? syncRunStore = null)
     {
         return new SyncOrchestrator(
             new FakePaycomClient(employees),
@@ -39,7 +40,7 @@ public class SyncOrchestratorTests
             directoryClient,
             new FakeFieldMappingStore(mappings ?? []),
             new FakeGroupAssignmentRuleStore(groupRules ?? []),
-            new FakeSyncRunStore(),
+            syncRunStore ?? new FakeSyncRunStore(),
             new FakeEmployeeSnapshotStore(),
             new FakeDiscoveredFieldStore(),
             new MappingEngine(),
@@ -143,22 +144,134 @@ public class SyncOrchestratorTests
         Assert.Equal("e1@contoso.com", directoryClient.LookedUpUpns[0]);
     }
 
+    [Fact]
+    public async Task RunAsync_WithNoPendingSubmissions_NeverQueriesTheProvisioningLog()
+    {
+        // Efficiency guard: the reconciliation pass must not call Graph at
+        // all in the steady state where nothing needs confirming.
+        var store = new FakeSyncRunStore();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+        var orchestrator = CreateOrchestrator([], provisioningClient, new FakeDirectoryClient(), syncRunStore: store);
+
+        await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Equal(0, provisioningClient.LogQueryCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReconcilesPendingSubmissionAsProvisionedWhenLogConfirmsSuccess()
+    {
+        var store = new FakeSyncRunStore();
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+
+        // Run 1: submit with no per-op result in the sync response (the
+        // common real-world case) - the record should land Submitted, not
+        // SubmissionError, and stay that way until reconciled.
+        var run1Employees = new List<EmployeeRecord> { Employee("E1", "e1@contoso.com") };
+        var run1Client = new FakeProvisioningClient(_ => new ScimStatus { Code = null! });
+        var orchestrator1 = CreateOrchestrator(run1Employees, run1Client, new FakeDirectoryClient(), mappings: mappings, syncRunStore: store);
+        var run1 = await orchestrator1.RunAsync(SyncTrigger.Timer, null, dryRun: false);
+
+        var pendingResult = Assert.Single(run1.EmployeeResults, r => r.EmployeeCode == "E1");
+        Assert.Equal(SyncOutcomes.Submitted, pendingResult.Outcome);
+
+        // Run 2: the provisioning log now confirms E1 succeeded.
+        var logEntries = new List<ProvisioningLogEntry>
+        {
+            new("E1", "Create", "success", DateTimeOffset.UtcNow, null)
+        };
+        var run2Client = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" }, logEntries);
+        var orchestrator2 = CreateOrchestrator([], run2Client, new FakeDirectoryClient(), mappings: mappings, syncRunStore: store);
+        await orchestrator2.RunAsync(SyncTrigger.Timer, null, dryRun: false);
+
+        var confirmed = await store.GetByIdAsync(run1.Id);
+        var e1Result = Assert.Single(confirmed!.EmployeeResults, r => r.EmployeeCode == "E1");
+        Assert.Equal(SyncOutcomes.Provisioned, e1Result.Outcome);
+        Assert.True(e1Result.Success);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReconcilesPendingSubmissionAsSubmissionErrorWhenLogConfirmsFailure()
+    {
+        var store = new FakeSyncRunStore();
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+
+        var run1Employees = new List<EmployeeRecord> { Employee("E1", "e1@contoso.com") };
+        var run1Client = new FakeProvisioningClient(_ => new ScimStatus { Code = null! });
+        var orchestrator1 = CreateOrchestrator(run1Employees, run1Client, new FakeDirectoryClient(), mappings: mappings, syncRunStore: store);
+        var run1 = await orchestrator1.RunAsync(SyncTrigger.Timer, null, dryRun: false);
+
+        var logEntries = new List<ProvisioningLogEntry>
+        {
+            new("E1", "Update", "failure", DateTimeOffset.UtcNow, "Attribute 'department' failed validation.")
+        };
+        var run2Client = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" }, logEntries);
+        var orchestrator2 = CreateOrchestrator([], run2Client, new FakeDirectoryClient(), mappings: mappings, syncRunStore: store);
+        await orchestrator2.RunAsync(SyncTrigger.Timer, null, dryRun: false);
+
+        var confirmed = await store.GetByIdAsync(run1.Id);
+        var e1Result = Assert.Single(confirmed!.EmployeeResults, r => r.EmployeeCode == "E1");
+        Assert.Equal(SyncOutcomes.SubmissionError, e1Result.Outcome);
+        Assert.False(e1Result.Success);
+        Assert.Equal("Attribute 'department' failed validation.", e1Result.Detail);
+    }
+
+    [Fact]
+    public async Task RunAsync_LeavesSubmissionPendingWhenNotYetInTheProvisioningLog()
+    {
+        var store = new FakeSyncRunStore();
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+
+        var run1Employees = new List<EmployeeRecord> { Employee("E1", "e1@contoso.com") };
+        var run1Client = new FakeProvisioningClient(_ => new ScimStatus { Code = null! });
+        var orchestrator1 = CreateOrchestrator(run1Employees, run1Client, new FakeDirectoryClient(), mappings: mappings, syncRunStore: store);
+        var run1 = await orchestrator1.RunAsync(SyncTrigger.Timer, null, dryRun: false);
+
+        // The log has entries, but none for E1 yet - the provisioning cycle
+        // presumably hasn't processed it.
+        var logEntries = new List<ProvisioningLogEntry>
+        {
+            new("SomeoneElse", "Create", "success", DateTimeOffset.UtcNow, null)
+        };
+        var run2Client = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" }, logEntries);
+        var orchestrator2 = CreateOrchestrator([], run2Client, new FakeDirectoryClient(), mappings: mappings, syncRunStore: store);
+        await orchestrator2.RunAsync(SyncTrigger.Timer, null, dryRun: false);
+
+        var confirmed = await store.GetByIdAsync(run1.Id);
+        var e1Result = Assert.Single(confirmed!.EmployeeResults, r => r.EmployeeCode == "E1");
+        Assert.Equal(SyncOutcomes.Submitted, e1Result.Outcome);
+    }
+
     private sealed class FakePaycomClient(IReadOnlyList<EmployeeRecord> employees) : IPaycomClient
     {
         public Task<IReadOnlyList<EmployeeRecord>> GetAllEmployeesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(employees);
     }
 
-    private sealed class FakeProvisioningClient(Func<string, ScimStatus> statusFor) : IEntraProvisioningClient
+    private sealed class FakeProvisioningClient(Func<string, ScimStatus> statusFor, IReadOnlyList<ProvisioningLogEntry>? logEntries = null) : IEntraProvisioningClient
     {
+        public int LogQueryCount { get; private set; }
+
         public Task<BulkUploadResult> SubmitBulkUploadAsync(IReadOnlyList<ScimBulkOperation> operations, CancellationToken cancellationToken = default)
         {
             var results = operations.Select(op => new ScimBulkOperationResult { BulkId = op.BulkId, Status = statusFor(op.BulkId) }).ToList();
             return Task.FromResult(new BulkUploadResult(1, results, []));
         }
 
-        public Task<IReadOnlyList<ProvisioningLogEntry>> GetRecentProvisioningLogAsync(int top = 100, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<ProvisioningLogEntry>>([]);
+        public Task<IReadOnlyList<ProvisioningLogEntry>> GetRecentProvisioningLogAsync(int top = 100, DateTimeOffset? since = null, CancellationToken cancellationToken = default)
+        {
+            LogQueryCount++;
+            return Task.FromResult(logEntries ?? (IReadOnlyList<ProvisioningLogEntry>)[]);
+        }
     }
 
     private sealed class FakeDirectoryClient : IEntraDirectoryClient
@@ -205,6 +318,7 @@ public class SyncOrchestratorTests
     private sealed class FakeSyncRunStore : ISyncRunStore
     {
         private readonly Dictionary<Guid, SyncRun> _runs = [];
+        private int _nextResultId = 1;
 
         public Task CreateAsync(SyncRun run, CancellationToken cancellationToken = default)
         {
@@ -215,6 +329,14 @@ public class SyncOrchestratorTests
         public Task UpdateAsync(SyncRun run, CancellationToken cancellationToken = default)
         {
             _runs[run.Id] = run;
+
+            // Simulate DB-generated identity column assignment, which only
+            // happens at persist time in the real store.
+            foreach (var result in run.EmployeeResults.Where(r => r.Id == 0))
+            {
+                result.Id = _nextResultId++;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -223,6 +345,26 @@ public class SyncOrchestratorTests
 
         public Task<SyncRun?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult(_runs.GetValueOrDefault(id));
+
+        public Task<IReadOnlyList<SyncRunEmployeeResult>> GetPendingSubmissionResultsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<SyncRunEmployeeResult>>(
+                [.. _runs.Values.SelectMany(r => r.EmployeeResults).Where(r => r.Outcome == SyncOutcomes.Submitted)]);
+
+        public Task ApplyProvisioningConfirmationsAsync(IReadOnlyList<ProvisioningConfirmationUpdate> updates, CancellationToken cancellationToken = default)
+        {
+            var allResults = _runs.Values.SelectMany(r => r.EmployeeResults).ToDictionary(r => r.Id);
+            foreach (var update in updates)
+            {
+                if (allResults.TryGetValue(update.EmployeeResultId, out var result))
+                {
+                    result.Success = update.Success;
+                    result.Outcome = update.Outcome;
+                    result.Detail = update.Detail;
+                }
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeEmployeeSnapshotStore : IEmployeeSnapshotStore

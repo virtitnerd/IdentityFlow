@@ -101,25 +101,33 @@ need to touch it at all.
 
 ## Data flow per run
 
-1. `SyncOrchestrator.RunAsync` pulls every worker from Paycom.
-2. Each provisionable worker (has a work email - status-independent, since
+1. Before anything else, `SyncOrchestrator.RunAsync` tries to confirm any
+   records a *previous* run left in the `Submitted` (pending) state,
+   against the Entra provisioning audit log - see **Provisioning
+   confirmation reconciliation** below. This step is skipped entirely
+   (no Graph call at all) once nothing is pending, and never blocks the
+   rest of the run if it fails.
+2. `SyncOrchestrator.RunAsync` pulls every worker from Paycom.
+3. Each provisionable worker (has a work email - status-independent, since
    a Terminated worker still needs to flow through to get disabled) is
    mapped to a SCIM `Operations` entry via configured `FieldMapping`s,
    including extension attributes.
-3. Anyone present in the *previous* run's snapshot but absent from this
+4. Anyone present in the *previous* run's snapshot but absent from this
    pull - and not already flagged Terminated - gets a defensive `active:
    false` operation queued and a prominent `VanishedFromFeed-AutoDisabled`
    result, since Paycom omitting a worker entirely (rather than sending
    Terminated) can't be distinguished from a feed problem without a human
    look.
-4. All operations are submitted to the Entra provisioning job's
+5. All operations are submitted to the Entra provisioning job's
    `bulkUpload` endpoint in batches, respecting documented rate limits.
-5. Group assignment rules are evaluated for every provisionable worker;
+   Anything the synchronous response doesn't explicitly reject is recorded
+   as `Submitted` (pending), not assumed successful outright - see below.
+6. Group assignment rules are evaluated for every provisionable worker;
    desired membership per assigned group is diffed against current Graph
    membership and reconciled.
-6. Outcomes (per employee and per group) and run-level counters are
+7. Outcomes (per employee and per group) and run-level counters are
    recorded to `SyncRun` / `SyncRunEmployeeResult` for the admin UI.
-7. The current employee set is snapshotted (full replace) for the next
+8. The current employee set is snapshotted (full replace) for the next
    run's vanished-worker check.
 
 A `dryRun: true` run does everything above except call Graph: it reports
@@ -147,36 +155,52 @@ first-time validation of new field mappings or group rules.
   role (`ProvisionerAdmin` by default) on every page via a fallback
   authorization policy - there is no anonymous or read-only surface.
 
-## Known gap: bulkUpload's synchronous response may not be a reliable per-record result
+## Provisioning confirmation reconciliation
 
-A research pass through Microsoft's own official sample
+Microsoft's own official sample
 ([AzureAD/entra-id-inbound-provisioning](https://github.com/AzureAD/entra-id-inbound-provisioning),
-`PowerShell/CSV2SCIM/src/CSV2SCIM.ps1`) found that Microsoft's own reference
-implementation **does not treat the bulkUpload POST's synchronous response
-as the source of truth for per-record success/failure**. Instead, it
-submits records essentially fire-and-forget, then separately queries the
-**asynchronous provisioning audit log**
-(`Get-MgAuditLogProvisioning` / `GET /auditLogs/provisioning`, filtered by
-cycle ID) afterward and tabulates outcomes from that.
+`PowerShell/CSV2SCIM/src/CSV2SCIM.ps1`) does **not treat the bulkUpload
+POST's synchronous response as the source of truth for per-record
+success/failure**. It submits records essentially fire-and-forget, then
+separately queries the **asynchronous provisioning audit log**
+(`Get-MgAuditLogProvisioning` / `GET /auditLogs/provisioning`) afterward
+and tabulates outcomes from that. This solution follows the same pattern:
 
-This solution currently does the opposite: `SyncOrchestrator.SubmitOperationsAsync`
-treats `ScimBulkOperationResult.Status.Code` from the synchronous response as
-the real per-employee outcome, marking anything that doesn't come back
-"200"/"201"/"202"/"204" as `SubmissionError`. If Entra's synchronous
-response is as unreliable for per-record status as Microsoft's own sample
-implies, some fraction of `SubmissionError` outcomes in the run history
-could be false negatives - records that actually succeeded once the
-provisioning cycle finished, just not reflected in the immediate response.
+1. `SubmitOperationsAsync` only trusts the synchronous bulkUpload response
+   when Entra explicitly returns a per-operation error status for a
+   specific record - a real, immediate signal worth acting on. Anything
+   else (a success code, *or no per-operation result at all*, which per
+   Microsoft's own sample is the common case) is recorded as
+   `SyncOutcomes.Submitted` - accepted, outcome not yet confirmed - rather
+   than optimistically "succeeded" or pessimistically "failed."
+2. At the *start* of the next run (any trigger - timer, manual, or API),
+   `SyncOrchestrator.ReconcilePendingProvisioningConfirmationsAsync` looks
+   for any `Submitted` results left over from previous runs. If there are
+   none, it returns immediately without calling Graph at all - the steady-
+   state cost of this mechanism is zero once confirmations catch up.
+3. If there are pending results, it reads
+   `EntraProvisioningClient.GetRecentProvisioningLogAsync` over a 72-hour
+   lookback window (generous on purpose - covers a missed run or a slow
+   provisioning cycle over a weekend, and costs nothing extra since the
+   call only happens when needed), matches log entries back to pending
+   results by employee code (the SCIM record's `externalId`), and updates
+   each to `Provisioned` (confirmed success), `ProvisioningSkipped`
+   (Entra decided no change was needed - not a failure), or
+   `SubmissionError` (confirmed failure, with the log's real error
+   message) via one batched `ISyncRunStore.ApplyProvisioningConfirmationsAsync`
+   call. A result with no matching log entry yet is left `Submitted` and
+   retried on a later run.
 
-`EntraProvisioningClient.GetRecentProvisioningLogAsync` already exists for
-exactly this purpose (reading `/auditLogs/provisioning`) but isn't wired
-into `SyncOrchestrator` or the admin UI yet - it's unused dead code today.
-Closing this gap means adding a follow-up reconciliation step (immediately,
-or on the *next* run) that fetches the provisioning log for the prior
-cycle and corrects any `SubmissionError` outcomes the log shows actually
-succeeded. Not yet implemented - flagging here since it's a real,
-sourced finding rather than a guess, and worth prioritizing before
-leaning on `SubmissionError` counts for anything operationally important.
+This means `RecordsSubmitted` on a given run is provisional, not final -
+some of what a run counts as submitted may later resolve to
+`SubmissionError` once the audit log catches up, and the reverse (a
+missing per-op result that turns out fine) no longer gets miscounted as a
+failure in the first place. Drill into a specific `SyncRun`'s employee
+results in the admin UI to see current, possibly-still-settling outcomes
+for that run; a `Submitted` result appearing on more than one or two
+consecutive future runs' reconciliation passes without resolving is worth
+investigating directly (a wrong matching attribute, a provisioning job
+that's paused, etc.).
 
 ## Other design decisions the same research validated or challenged
 

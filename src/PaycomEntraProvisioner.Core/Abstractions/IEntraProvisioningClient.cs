@@ -27,5 +27,16 @@ public interface IEntraProvisioningClient
     /// </summary>
     Task<BulkUploadResult> SubmitBulkUploadAsync(IReadOnlyList<ScimBulkOperation> operations, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<ProvisioningLogEntry>> GetRecentProvisioningLogAsync(int top = 100, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Reads the API-driven provisioning cycle's audit log - the
+    /// authoritative source for per-record outcomes per Microsoft's own
+    /// reference implementation, since the synchronous bulkUpload response
+    /// isn't a reliable per-record result (see docs/architecture.md).
+    /// </summary>
+    /// <param name="since">
+    /// When set, restricts to entries at or after this time so a
+    /// reconciliation pass over a small pending set doesn't pull an
+    /// unbounded log.
+    /// </param>
+    Task<IReadOnlyList<ProvisioningLogEntry>> GetRecentProvisioningLogAsync(int top = 100, DateTimeOffset? since = null, CancellationToken cancellationToken = default);
 }

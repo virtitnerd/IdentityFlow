@@ -144,12 +144,19 @@ public sealed class EntraProvisioningClient(
 
     public async Task<IReadOnlyList<ProvisioningLogEntry>> GetRecentProvisioningLogAsync(
         int top = 100,
+        DateTimeOffset? since = null,
         CancellationToken cancellationToken = default)
     {
         var options = optionsMonitor.CurrentValue;
+        var filter = "serviceType eq 'API-driven'";
+        if (since is { } sinceValue)
+        {
+            filter += $" and activityDateTime ge {sinceValue.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}";
+        }
+
         var url = $"{options.GraphBaseUrl}/auditLogs/provisioning" +
                   $"?$top={top}&$orderby=activityDateTime desc" +
-                  $"&$filter=serviceType eq 'API-driven'";
+                  $"&$filter={Uri.EscapeDataString(filter)}";
 
         using var response = await SendGetWithThrottleRetryAsync(url, options, cancellationToken);
         if (!response.IsSuccessStatusCode)

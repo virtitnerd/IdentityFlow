@@ -59,4 +59,37 @@ public sealed class SyncRunStore(ProvisionerDbContext db) : ISyncRunStore
         await db.SyncRuns.AsNoTracking()
             .Include(x => x.EmployeeResults)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<SyncRunEmployeeResult>> GetPendingSubmissionResultsAsync(CancellationToken cancellationToken = default) =>
+        await db.SyncRunEmployeeResults.AsNoTracking()
+            .Where(r => r.Outcome == SyncOutcomes.Submitted)
+            .OrderBy(r => r.Id)
+            .ToListAsync(cancellationToken);
+
+    public async Task ApplyProvisioningConfirmationsAsync(IReadOnlyList<ProvisioningConfirmationUpdate> updates, CancellationToken cancellationToken = default)
+    {
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        var ids = updates.Select(u => u.EmployeeResultId).ToList();
+        var tracked = await db.SyncRunEmployeeResults
+            .Where(r => ids.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, cancellationToken);
+
+        foreach (var update in updates)
+        {
+            if (!tracked.TryGetValue(update.EmployeeResultId, out var entity))
+            {
+                continue;
+            }
+
+            entity.Success = update.Success;
+            entity.Outcome = update.Outcome;
+            entity.Detail = update.Detail;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
 }
