@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IdentityFlow.Core/IdentityFlow.Core.csproj" />
+    <Project Path="src/IdentityFlow.Data/IdentityFlow.Data.csproj" />
+    <Project Path="src/IdentityFlow.Functions/IdentityFlow.Functions.csproj" />
+    <Project Path="src/IdentityFlow.Graph/IdentityFlow.Graph.csproj" />
+    <Project Path="src/IdentityFlow.Paycom/IdentityFlow.Paycom.csproj" />
+    <Project Path="src/IdentityFlow.Web/IdentityFlow.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IdentityFlow.Core.Tests/IdentityFlow.Core.Tests.csproj" />
+    <Project Path="tests/IdentityFlow.Data.Tests/IdentityFlow.Data.Tests.csproj" />
+    <Project Path="tests/IdentityFlow.Paycom.Tests/IdentityFlow.Paycom.Tests.csproj" />
+  </Folder>
+</Solution>

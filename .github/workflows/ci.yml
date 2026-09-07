@@ -24,10 +24,10 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Restore
-        run: dotnet restore PaycomEntraProvisioner.slnx
+        run: dotnet restore IdentityFlow.slnx
 
       - name: Build (${{ matrix.configuration }})
-        run: dotnet build PaycomEntraProvisioner.slnx --configuration ${{ matrix.configuration }} --no-restore
+        run: dotnet build IdentityFlow.slnx --configuration ${{ matrix.configuration }} --no-restore
 
       - name: Test (${{ matrix.configuration }})
-        run: dotnet test PaycomEntraProvisioner.slnx --configuration ${{ matrix.configuration }} --no-build --verbosity normal
+        run: dotnet test IdentityFlow.slnx --configuration ${{ matrix.configuration }} --no-build --verbosity normal

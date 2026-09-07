@@ -1,4 +1,4 @@
-// Paycom -> Entra ID Provisioner - main deployment
+// IdentityFlow (Paycom -> Entra ID provisioning) - main deployment
 //
 // Provisions: Log Analytics + Application Insights, a Key Vault, an Azure
 // SQL Database, a Linux Function App (the sync engine) and a Linux Web App
@@ -15,7 +15,7 @@
 //   az deployment group what-if -g <rg> -f main.bicep -p @main.bicepparam
 targetScope = 'resourceGroup'
 
-@description('Short, unique name used as the base for all resource names (e.g. "paycomprov"). Lowercase alphanumeric, 3-15 chars.')
+@description('Short, unique name used as the base for all resource names (e.g. "identityflow"). Lowercase alphanumeric, 3-15 chars.')
 @minLength(3)
 @maxLength(15)
 param appName string
@@ -40,7 +40,7 @@ param webAppSkuName string = 'B1'
 
 @description('Tags applied to every resource.')
 param tags object = {
-  application: 'paycom-entra-provisioner'
+  application: 'identityflow'
   environment: environmentName
 }
 
@@ -49,7 +49,7 @@ var functionAppName = 'func-${resourceToken}'
 var webAppName = 'app-${resourceToken}'
 var keyVaultName = take('kv-${resourceToken}', 24)
 var sqlServerName = 'sql-${resourceToken}'
-var sqlDatabaseName = 'PaycomEntraProvisioner'
+var sqlDatabaseName = 'IdentityFlow'
 var storageAccountName = take(toLower(replace('st${resourceToken}', '-', '')), 24)
 var logAnalyticsName = 'log-${resourceToken}'
 var appInsightsName = 'appi-${resourceToken}'

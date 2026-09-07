@@ -1,4 +1,4 @@
--- Run once after the first deployment, connected to the PaycomEntraProvisioner
+-- Run once after the first deployment, connected to the IdentityFlow
 -- database as the Entra ID AAD admin configured in main.bicep (e.g. via
 -- `sqlcmd` with Active Directory auth, or the Azure Portal's Query Editor).
 --

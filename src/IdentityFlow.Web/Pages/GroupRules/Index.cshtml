@@ -1,0 +1,88 @@
+@page
+@model IdentityFlow.Web.Pages.GroupRules.IndexModel
+@{
+    ViewData["Title"] = "Group Assignment Rules";
+}
+
+<h1>Group Assignment Rules</h1>
+<p class="text-muted">
+    Assigns employees to <strong>non-dynamic</strong> (assigned) Entra ID security groups based on their
+    Paycom attributes. Prefer a dynamic-membership group in Entra ID whenever a rule can be expressed that
+    way - Entra evaluates those automatically once the mapped/extension attributes are synced. Use a rule
+    here only when dynamic membership can't express the condition, or the group also carries manually
+    managed exception members.
+</p>
+<p class="text-muted small">
+    Condition is a <code>System.Linq.Dynamic.Core</code> boolean expression evaluated against
+    <code>employee</code>, e.g. <code>employee.Department == "Sales" and employee.Status == "Active"</code>.
+</p>
+
+<table class="table table-striped align-middle">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Condition</th>
+            <th>Target group</th>
+            <th>Removes on fail</th>
+            <th>Enabled</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var rule in Model.Rules)
+        {
+            <tr>
+                <td>@rule.Name</td>
+                <td><code class="small">@rule.Condition</code></td>
+                <td>@(rule.TargetGroupDisplayName ?? rule.TargetGroupObjectId)</td>
+                <td>@(rule.RemoveWhenConditionFails ? "Yes" : "No (additive only)")</td>
+                <td>@(rule.Enabled ? "Yes" : "No")</td>
+                <td>
+                    <form method="post" asp-page-handler="Delete" asp-route-id="@rule.Id"
+                          onsubmit="return confirm('Delete this group rule?');">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h2 class="h4 mt-4">Add a group rule</h2>
+<form method="post" asp-page-handler="Save" class="row g-3">
+    <div class="col-md-3">
+        <label class="form-label" asp-for="Input.Name">Name</label>
+        <input class="form-control" asp-for="Input.Name" placeholder="Sales team" />
+    </div>
+    <div class="col-md-5">
+        <label class="form-label" asp-for="Input.Condition">Condition</label>
+        <input class="form-control" asp-for="Input.Condition" placeholder="employee.Department == &quot;Sales&quot;" />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label" asp-for="Input.TargetGroupObjectId">Group object ID</label>
+        <input class="form-control" asp-for="Input.TargetGroupObjectId" placeholder="00000000-0000-..." />
+    </div>
+    <div class="col-md-2">
+        <label class="form-label" asp-for="Input.TargetGroupDisplayName">Group display name</label>
+        <input class="form-control" asp-for="Input.TargetGroupDisplayName" placeholder="Sales - All" />
+    </div>
+    <div class="col-md-6">
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.RemoveWhenConditionFails" checked />
+            <label class="form-check-label" asp-for="Input.RemoveWhenConditionFails">
+                Remove members who no longer satisfy this condition
+            </label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" asp-for="Input.Enabled" checked />
+            <label class="form-check-label" asp-for="Input.Enabled">Enabled</label>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <label class="form-label" asp-for="Input.Notes">Notes</label>
+        <input class="form-control" asp-for="Input.Notes" />
+    </div>
+    <div class="col-12">
+        <button type="submit" class="btn btn-primary">Add rule</button>
+    </div>
+</form>

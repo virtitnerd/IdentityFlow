@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>IdentityFlow.Functions</RootNamespace>
+    <_FunctionsSkipCleanOutput>true</_FunctionsSkipCleanOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.1.0" OutputItemType="Analyzer" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.1" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.51.0" />
+    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="3.1.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="host.json" CopyToOutputDirectory="PreserveNewest" />
+    <!--
+      local.settings.json is gitignored (it carries local secrets) and only
+      needed for locally running/debugging the Function (func start /
+      dotnet run) - never for a plain build. The Exists() guard keeps a
+      fresh clone (and CI, which never has it) building fine; copy
+      local.settings.json.example to local.settings.json for local runs.
+    -->
+    <None Include="local.settings.json" Condition="Exists('local.settings.json')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\IdentityFlow.Core\IdentityFlow.Core.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Paycom\IdentityFlow.Paycom.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Graph\IdentityFlow.Graph.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Data\IdentityFlow.Data.csproj" />
+  </ItemGroup>
+
+</Project>

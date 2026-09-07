@@ -16,13 +16,13 @@ server or a from-scratch Graph user-CRUD pipeline.
 Paycom does not publish a public API - access, base URL, and the exact
 report/field layout are negotiated per customer with a Paycom
 representative. So the Paycom side is built as a thin, configurable
-adapter (`PaycomEntraProvisioner.Paycom`) that normalizes whatever comes
+adapter (`IdentityFlow.Paycom`) that normalizes whatever comes
 back into a canonical `EmployeeRecord`, rather than hard-coding a specific
 contract.
 
 Assigned (non-dynamic) security groups sit outside what the provisioning
 job manages, so a second, direct Microsoft Graph client
-(`PaycomEntraProvisioner.Graph`) reconciles those based on configurable
+(`IdentityFlow.Graph`) reconciles those based on configurable
 rules. Wherever possible, prefer an Entra **dynamic-membership group**
 instead - once an attribute (including an extension attribute) is synced,
 Entra evaluates dynamic membership automatically and this solution doesn't
@@ -38,7 +38,7 @@ need to touch it at all.
                                        │ REST (SID/token or OAuth2)
                                        ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                      PaycomEntraProvisioner.Core                       │
+│                      IdentityFlow.Core                       │
 │  EmployeeRecord · FieldMapping/GroupAssignmentRule · MappingEngine ·   │
 │  GroupRuleEvaluator · SyncOrchestrator (the pipeline both hosts call)  │
 └───────┬───────────────────────────┬──────────────────────┬───────────┘
@@ -68,20 +68,20 @@ need to touch it at all.
                      sync run history, employee snapshots
 ```
 
-- **PaycomEntraProvisioner.Core** - domain models, the mapping engine that
+- **IdentityFlow.Core** - domain models, the mapping engine that
   turns a Paycom record + configured `FieldMapping`s into a SCIM resource,
   the group rule evaluator (`System.Linq.Dynamic.Core` expressions), and
   `SyncOrchestrator`, which is the single pipeline both hosts call so
   scheduled and manual runs never diverge.
-- **PaycomEntraProvisioner.Paycom** - `IPaycomClient` implementation.
+- **IdentityFlow.Paycom** - `IPaycomClient` implementation.
   Configurable field aliasing (`PaycomClientOptions.CoreFieldAliases`) so
   it can adapt to whatever report layout your Paycom rep provisions,
   without code changes.
-- **PaycomEntraProvisioner.Graph** - `IEntraProvisioningClient` (bulkUpload,
+- **IdentityFlow.Graph** - `IEntraProvisioningClient` (bulkUpload,
   chunked to the documented 50-ops/call, throttled to 40 calls/5s) and
   `IEntraDirectoryClient` (user lookup + assigned-group reconciliation via
   the Microsoft Graph SDK).
-- **PaycomEntraProvisioner.Data** - EF Core (Azure SQL) persistence for
+- **IdentityFlow.Data** - EF Core (Azure SQL) persistence for
   field mappings, group rules, sync run history, employee snapshots
   (used to detect a worker vanishing from the Paycom feed entirely), a
   catalog of Paycom field names actually observed across runs - the admin
@@ -91,10 +91,10 @@ need to touch it at all.
   the source/target field names to be typed from memory - and the
   configurable Lifecycle Policy tasks plus their per-employee execution
   history (see **Lifecycle Policy Engine** below).
-- **PaycomEntraProvisioner.Functions** - Azure Functions isolated worker.
+- **IdentityFlow.Functions** - Azure Functions isolated worker.
   `TimerSync` runs the pipeline on a configurable NCRONTAB schedule;
   `ManualSync` is a function-key-secured HTTP entry point for automation.
-- **PaycomEntraProvisioner.Web** - Razor Pages admin/monitoring UI, secured
+- **IdentityFlow.Web** - Razor Pages admin/monitoring UI, secured
   with Entra ID sign-in (a separate, minimally-privileged app registration
   from the one used for Graph calls). Dashboard, sync history with
   per-employee drill-down, and CRUD for field mappings, group rules, and

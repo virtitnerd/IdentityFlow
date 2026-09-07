@@ -1,10 +1,10 @@
-# Paycom → Entra ID Provisioner
+# IdentityFlow
 
-[![CI](https://github.com/virtitnerd/Paycom-Entra-Provisioner/actions/workflows/ci.yml/badge.svg)](https://github.com/virtitnerd/Paycom-Entra-Provisioner/actions/workflows/ci.yml)
+[![CI](https://github.com/virtitnerd/IdentityFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/virtitnerd/IdentityFlow/actions/workflows/ci.yml)
 
-An in-house solution that replaces manual "get a new-hire email from HR,
-go create the Entra ID account by hand" with an automated pipeline: pull
-current worker data from Paycom, map it onto Entra ID users (including
+An in-house Paycom → Entra ID provisioning pipeline that replaces manually
+getting a new-hire email from HR and creating the Entra ID account by hand:
+pull current worker data from Paycom, map it onto Entra ID users (including
 extension attributes), submit it to Entra's own **API-driven inbound
 provisioning** service (which handles create/update/disable), and reconcile
 assigned-group membership - all on a schedule, with a web UI for
@@ -17,16 +17,16 @@ it's built this way instead of a hand-rolled SCIM server.
 
 ```
 src/
-  PaycomEntraProvisioner.Core/      Domain models, mapping engine, group rule
+  IdentityFlow.Core/      Domain models, mapping engine, group rule
                                      evaluator, SyncOrchestrator (shared pipeline)
-  PaycomEntraProvisioner.Paycom/    Configurable Paycom API client
-  PaycomEntraProvisioner.Graph/     Entra bulkUpload client + Graph directory/group client
-  PaycomEntraProvisioner.Data/      EF Core persistence (Azure SQL)
-  PaycomEntraProvisioner.Functions/ Azure Functions isolated worker (timer + HTTP triggers)
-  PaycomEntraProvisioner.Web/       Razor Pages admin/monitoring UI (Entra ID sign-in)
+  IdentityFlow.Paycom/    Configurable Paycom API client
+  IdentityFlow.Graph/     Entra bulkUpload client + Graph directory/group client
+  IdentityFlow.Data/      EF Core persistence (Azure SQL)
+  IdentityFlow.Functions/ Azure Functions isolated worker (timer + HTTP triggers)
+  IdentityFlow.Web/       Razor Pages admin/monitoring UI (Entra ID sign-in)
 tests/
-  PaycomEntraProvisioner.Core.Tests/    Mapping engine + group rule evaluator
-  PaycomEntraProvisioner.Paycom.Tests/  Paycom HTTP client (auth, pagination, URL composition)
+  IdentityFlow.Core.Tests/    Mapping engine + group rule evaluator
+  IdentityFlow.Paycom.Tests/  Paycom HTTP client (auth, pagination, URL composition)
 infra/                              Bicep IaC
 docs/                               Architecture, Entra app setup, Paycom integration, deployment
 ```

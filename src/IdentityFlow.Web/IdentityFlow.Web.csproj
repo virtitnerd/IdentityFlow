@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\IdentityFlow.Core\IdentityFlow.Core.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Paycom\IdentityFlow.Paycom.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Graph\IdentityFlow.Graph.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Data\IdentityFlow.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Identity.Web" Version="4.14.2" />
+    <PackageReference Include="Microsoft.Identity.Web.UI" Version="4.14.2" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

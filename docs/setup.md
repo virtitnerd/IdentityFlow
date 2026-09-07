@@ -15,13 +15,13 @@
 
 ## Local development
 
-1. `PaycomEntraProvisioner.Functions.csproj` requires `local.settings.json`
+1. `IdentityFlow.Functions.csproj` requires `local.settings.json`
    to exist just to build (Functions tooling copies it to the output
    directory) - copy the template and fill in your own values:
    ```
-   cp src/PaycomEntraProvisioner.Functions/local.settings.json.example src/PaycomEntraProvisioner.Functions/local.settings.json
+   cp src/IdentityFlow.Functions/local.settings.json.example src/IdentityFlow.Functions/local.settings.json
    ```
-   Do the same conceptually for `src/PaycomEntraProvisioner.Web/appsettings.Development.json`
+   Do the same conceptually for `src/IdentityFlow.Web/appsettings.Development.json`
    (no template checked in for it since ASP.NET Core doesn't require the
    file to exist - only add one if you want to override `appsettings.json`
    locally). Both need the same configuration keys - `Paycom:*`, `Entra:*`,
@@ -30,12 +30,12 @@
 2. Apply the initial EF Core migration to your local database:
    ```
    dotnet tool install --global dotnet-ef
-   dotnet ef database update --project src/PaycomEntraProvisioner.Data --startup-project src/PaycomEntraProvisioner.Data
+   dotnet ef database update --project src/IdentityFlow.Data --startup-project src/IdentityFlow.Data
    ```
    (Both hosts also call `Database.Migrate()` on startup, so this is mostly
    useful for inspecting the schema ahead of time.)
-3. Run the Function host: `cd src/PaycomEntraProvisioner.Functions && func start`
-4. Run the Web app: `cd src/PaycomEntraProvisioner.Web && dotnet run`
+3. Run the Function host: `cd src/IdentityFlow.Functions && func start`
+4. Run the Web app: `cd src/IdentityFlow.Web && dotnet run`
 5. Add at least one `FieldMapping` with `IsMatchingAttribute = true`
    (typically `userPrincipalName`) before running a sync, or the Entra
    provisioning job has no way to anchor incoming records to existing users.
@@ -77,10 +77,10 @@ After the deployment finishes:
    alternative if you'd rather have one static egress IP than a range.
 4. Deploy the application code:
    ```
-   dotnet publish src/PaycomEntraProvisioner.Functions -c Release -o out/functions
+   dotnet publish src/IdentityFlow.Functions -c Release -o out/functions
    func azure functionapp publish <functionAppName> --dotnet-isolated
 
-   dotnet publish src/PaycomEntraProvisioner.Web -c Release -o out/web
+   dotnet publish src/IdentityFlow.Web -c Release -o out/web
    az webapp deploy -g rg-paycom-provisioner -n <webAppName> --src-path out/web
    ```
 5. Sign in to the Web app once as an admin and add your real field mappings
@@ -93,5 +93,5 @@ After the deployment finishes:
 
 There's no CI workflow checked in yet. At minimum, wire up a GitHub Actions
 workflow that runs `dotnet build` and `dotnet test` on the solution
-(`PaycomEntraProvisioner.slnx`) on every PR before this goes to a shared
+(`IdentityFlow.slnx`) on every PR before this goes to a shared
 branch.
