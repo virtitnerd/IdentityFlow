@@ -3,8 +3,19 @@
 Paycom does not publish a public developer portal - access is provisioned
 per customer by a Paycom representative. The facts below are confirmed from
 Paycom's own **"API Companion Guide" (2026)** provided by a Paycom
-customer, not guessed from third-party aggregator sites. Where something
-is still unconfirmed for your specific tenant, it's called out explicitly.
+customer, cross-checked against two further primary-source Paycom PDFs
+(a "Client API Checklist" and an "Automation: Getting Started Guide") and
+a real open-source Paycom connector implementation (see **Prior art**
+below) found in a follow-up research pass - not guessed from third-party
+aggregator sites. Where something is still unconfirmed for your specific
+tenant, it's called out explicitly.
+
+**A note on sources to distrust**: several SEO/aggregator sites
+(getknit.dev, Rollout.com, ApiX-Drive) publish confident-sounding "Paycom
+API" documentation that is almost certainly generic templated content, not
+real - it describes a fictional `api.paycom.com` domain, OAuth2 bearer
+auth, and a generic `/employees`/`/payrolls`/`/time_entries` CRUD surface
+that matches none of the confirmed facts below. Don't cite them.
 
 ## Confirmed facts
 
@@ -84,6 +95,29 @@ is still unconfirmed for your specific tenant, it's called out explicitly.
   Employee IDs Changes" and "Get Employee Change Fields") returning
   field-level diffs (`changedesc`, `changetime`, `old_value`, `new_value`).
   This solution doesn't use it yet - see **Future: delta sync** below.
+- **A sandbox/demo environment is real and confirmed**: Paycom's own
+  "Automation: Getting Started Guide" describes "Demo API Accounts" - test
+  credentials against a test Paycom account with fictional data, obtained
+  by asking your representative (not self-service). Ask for these before
+  touching a live tenant.
+- **The onboarding flow, confirmed from a second primary-source PDF**:
+  discovery call with your Paycom rep -> NDA (sometimes required before
+  any docs are shared) -> a proposal/MSA to add API access to your Paycom
+  suite -> SID/Token issuance -> a first test call against the base URL ->
+  then endpoint-by-endpoint script building. The live, current, tenant-
+  specific endpoint documentation lives inside the product itself (**User
+  Options -> User Access and Security -> API Setup -> Documentation**,
+  exportable to PDF) rather than as a single static public spec - this is
+  why "Companion Guide" PDFs circulating among different customers can
+  differ by year and by tenant.
+- **Multiple legal entities (EINs) under one Paycom instance is a real
+  gotcha**, per a working Paycom-to-Entra ID provisioning vendor
+  (Joinly): the same person can exist across multiple EINs, and
+  termination logic needs to trigger only once *all* of a person's active
+  employments end, not on the first one. If your organization has more
+  than one EIN in Paycom, validate whether `employeedirectory` can return
+  more than one row per person (one per EIN) before assuming `eecode` is
+  a stable 1:1 key - this solution currently assumes one row per employee.
 
 ## Wiring up your tenant's actual field names
 
@@ -103,6 +137,34 @@ Every field Paycom returns - not just the ones in `CoreFieldAliases` - lands
 in `EmployeeRecord.RawFields` verbatim, so a `FieldMapping` in the admin UI
 can reference any Paycom field directly by its native name.
 
+## Prior art: a real open-source Paycom connector
+
+A follow-up research pass found an actual open-source Paycom connector -
+[Tools4everBV/HelloID-Conn-Prov-Source-Paycom](https://github.com/Tools4everBV/HelloID-Conn-Prov-Source-Paycom)
+(PowerShell, for the commercial HelloID IAM platform) - which independently
+confirms the base URL and Basic-auth scheme above, but uses a **different
+roster call than this solution assumes**: `GET api/v1/employeeid` for the
+employee ID list, then a separate `GET api/v1/employee/{eecode}` call
+*per employee* for details, plus `GET api/v1/employee/{eecode}/customfield`
+*per employee* for custom fields (returned as an array of
+`{description, value}` pairs, not flat properties).
+
+This doesn't necessarily mean `employeedirectory` is wrong - Paycom likely
+exposes more than one way to enumerate employees - but it's worth
+confirming during setup whether your tenant's `employeedirectory` response
+actually contains the full field set you need, or whether you'll also need
+per-employee detail/custom-field calls. If the latter, `PaycomHttpClient`
+will need a second, per-employee fetch stage - flagged here rather than
+assumed away.
+
+**Worth avoiding, seen in that reference implementation**: it calls
+per-employee endpoints one at a time with no concurrency, fetches only the
+roster's first page with no continuation loop, and has no retry/backoff at
+all (masked with a 3600-second timeout instead). If a per-employee detail
+call ends up being necessary here, budget for the same batching/retry
+care already built into `PaycomHttpClient`'s pagination and
+`EntraProvisioningClient`'s throttling - don't repeat that anti-pattern.
+
 ## Validating against the real API
 
 1. Get sandbox credentials from Paycom's automation team
@@ -110,7 +172,18 @@ can reference any Paycom field directly by its native name.
    region's base URL.
 2. Call `employeedirectory` with a tool like Postman/Testfully first (as
    Paycom's own guide recommends) to see real field names before touching
-   config.
+   config. While there, check:
+   - Whether it returns the full field set you need, or only IDs/basics
+     (see **Prior art** above - you may need per-employee detail calls too).
+   - **Whether terminated employees come back at all without an explicit
+     `eestatus` filter.** This is genuinely unconfirmed even after
+     dedicated research - Paycom's data model never deletes a terminated
+     employee's record, but that doesn't guarantee the *default* directory
+     listing includes them. If it doesn't, the "vanished from feed" safety
+     net in `SyncOrchestrator` (see the architecture doc) stops being a
+     rare edge case and becomes the **primary** way terminations are
+     detected in practice - worth knowing going in rather than discovering
+     it the first time someone leaves the company.
 3. Update `CoreFieldAliases` and `StatusValueMap` to match.
 4. Run a **dry run** sync from the admin dashboard and review the
    per-employee preview before enabling the scheduled Function trigger.
