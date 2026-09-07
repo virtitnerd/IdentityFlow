@@ -75,15 +75,34 @@ that matches none of the confirmed facts below. Don't cite them.
   - check this first if everything else looks right), 404 Not Found, 409
   Conflict, 413 Forbidden (**endpoint not enabled** for your API user, not
   the standard "payload too large" meaning), 429 Too Many Requests.
-- **Webhooks are real and documented** - correcting an earlier version of
-  this doc, which said webhook shape "isn't part of Paycom's public
-  documentation." Paycom describes it as a "reverse API": you subscribe to
-  change events (e.g. an employee status change), Paycom POSTs limited
-  event details to a listener URL you host, and you call back into the
-  API to retrieve the full record. The exact webhook payload schema is in
-  a separate "Paycom Webhooks Guide" this session hasn't seen - ask your
-  rep for it if you want to move off polling. See **Future: webhooks**
-  below for how that would plug in.
+- **Webhooks are real, and now confirmed in actual production use** - a
+  GitHub code search turned up a real webhook listener
+  (`cinderwell/NodeHookServer`, a Node.js server; not affiliated with this
+  project) built specifically to receive Paycom webhooks. Its own README:
+  *"listens to web hooks from the PayCom HRIS... triggered by new hire and
+  termination events."* Confirmed real webhook routes from its source:
+  `/api/newhire`, `/api/termdate`, `/api/staffchange` (plus a
+  `/api/newemployee` route its own code comments mark superseded). Every
+  payload carries the changed employee's identifier as **`Object_Identifier`**
+  in the POST body - the first concrete webhook field name found anywhere
+  in this research. Paycom itself describes the mechanism as a "reverse
+  API": you subscribe to change events, Paycom POSTs limited details to a
+  listener URL, and you call back into the API for the full record. The
+  full payload schema is still in a separate "Paycom Webhooks Guide" this
+  project hasn't seen - ask your rep for it if you want to move off
+  polling.
+
+  **The more important lesson from that same real integrator**: its own
+  code comment on the original `/api/newemployee` webhook route reads
+  *"no longer using this, triggers too late"* - they moved their primary
+  reliance to a polling/catch-up job (`WorkerBeeCatchup.ps1`, run on every
+  server startup to sweep up anything the webhook missed) rather than
+  trusting the webhook alone for correctness. That's independent,
+  real-world validation of this solution's own design: polling on a
+  schedule plus a defensive reconciliation pass, with webhooks (if ever
+  added) as a latency optimization layered on top - never the sole source
+  of truth. See **Future: webhooks** below for how that would plug in
+  without changing that underlying assumption.
 - **Sensitive endpoints are disabled by default** and gated separately:
   Employee Sensitive, Employee Rates by Allocation, Employee Effective
   Rates by Allocation, Employee Taxes. Employee Sensitive includes SSN -
@@ -164,6 +183,36 @@ all (masked with a 3600-second timeout instead). If a per-employee detail
 call ends up being necessary here, budget for the same batching/retry
 care already built into `PaycomHttpClient`'s pagination and
 `EntraProvisioningClient`'s throttling - don't repeat that anti-pattern.
+
+**Further corroboration found via a direct GitHub code search** for the
+exact base URL (22 results, not affiliated with this project):
+
+- A production NetSuite integration
+  (`Flogistix-Netsuite/Flogistix`, `Scheduled/Paycom Get Employees.js`)
+  calls **`employeedirectory?pagesize=500`** directly as its "get all
+  employees" step - real-world confirmation that `employeedirectory` does
+  work as a one-call bulk roster fetch, at least for that tenant. The same
+  repo also has a separate `Paycom--Get Employee Codes.js` script hitting
+  `employeeid?pagesize=500` on its own, and a
+  `Call Paycom and Update Employee.js` script hitting `employee/{empId}`
+  for single-record updates - so a real integrator uses all three
+  endpoints for different purposes rather than treating them as
+  redundant. Confidence: high (production code, not a blog post).
+- A C# implementation (`osiates/islands_oldrast`) independently confirms
+  this project's exact Basic Auth construction -
+  `Convert.ToBase64String(Encoding.ASCII.GetBytes($"{Sid}:{Token}"))` into
+  an `Authorization: Basic` header - and calls `api/v1.1/punchimport`
+  (note the **v1.1**, one API version older than the "v1.2" the
+  Companion Guide's punch-import example showed) - a reminder that
+  endpoint versions may vary by tenant/contract date, so confirm the
+  exact version your own Endpoint Guide documents rather than assuming
+  the newest.
+- **Not a technical finding, but worth knowing**: that same C# repo has a
+  live production SID and API token hardcoded in source, in a public
+  GitHub repository. Not this project's issue to fix, but a sharp
+  reminder of exactly the failure mode `local.settings.json.example` and
+  Key Vault references in this project exist to prevent - never let a
+  real SID/token land in a file that could get committed.
 
 ## Validating against the real API
 
