@@ -22,7 +22,14 @@
 
   <ItemGroup>
     <None Include="host.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="local.settings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <!--
+      local.settings.json is gitignored (it carries local secrets) and only
+      needed for locally running/debugging the Function (func start /
+      dotnet run) - never for a plain build. The Exists() guard keeps a
+      fresh clone (and CI, which never has it) building fine; copy
+      local.settings.json.example to local.settings.json for local runs.
+    -->
+    <None Include="local.settings.json" Condition="Exists('local.settings.json')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>
