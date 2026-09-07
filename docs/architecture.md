@@ -16,9 +16,12 @@ server or a from-scratch Graph user-CRUD pipeline.
 Paycom does not publish a public API - access, base URL, and the exact
 report/field layout are negotiated per customer with a Paycom
 representative. So the Paycom side is built as a thin, configurable
-adapter (`IdentityFlow.Paycom`) that normalizes whatever comes
-back into a canonical `EmployeeRecord`, rather than hard-coding a specific
-contract.
+adapter (`IdentityFlow.Clients.Paycom`) behind the HR-system-agnostic
+`IHrClient` interface, normalizing whatever comes back into a canonical
+`EmployeeRecord` rather than hard-coding a specific contract. Paycom is the
+only configured `IHrClient` implementation today - `IdentityFlow.Clients`
+is where a second HR system's client would live if one is ever needed,
+without Core or anything downstream of `IHrClient` changing at all.
 
 Assigned (non-dynamic) security groups sit outside what the provisioning
 job manages, so a second, direct Microsoft Graph client
@@ -38,14 +41,14 @@ need to touch it at all.
                                        │ REST (SID/token or OAuth2)
                                        ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                      IdentityFlow.Core                       │
+│                           IdentityFlow.Core                           │
 │  EmployeeRecord · FieldMapping/GroupAssignmentRule · MappingEngine ·   │
 │  GroupRuleEvaluator · SyncOrchestrator (the pipeline both hosts call)  │
 └───────┬───────────────────────────┬──────────────────────┬───────────┘
         │                           │                      │
         ▼                           ▼                      ▼
  Paycom client              Entra provisioning       Entra directory
- (Paycom project)           client (bulkUpload)       client (Graph SDK)
+ (IdentityFlow.Clients)     client (bulkUpload)       client (Graph SDK)
         │                           │                      │
         │                           ▼                      ▼
         │                 Entra ID API-driven      Users / Groups (assigned
@@ -73,10 +76,14 @@ need to touch it at all.
   the group rule evaluator (`System.Linq.Dynamic.Core` expressions), and
   `SyncOrchestrator`, which is the single pipeline both hosts call so
   scheduled and manual runs never diverge.
-- **IdentityFlow.Paycom** - `IPaycomClient` implementation.
-  Configurable field aliasing (`PaycomClientOptions.CoreFieldAliases`) so
-  it can adapt to whatever report layout your Paycom rep provisions,
-  without code changes.
+- **IdentityFlow.Clients** - HR system clients behind Core's `IHrClient`
+  interface. `IdentityFlow.Clients.Paycom` is the only implementation
+  today - configurable field aliasing (`PaycomClientOptions.CoreFieldAliases`)
+  lets it adapt to whatever report layout your Paycom rep provisions
+  without code changes. A second HR system later means a sibling
+  `IdentityFlow.Clients.<X>` implementation, registered in place of (or
+  alongside) Paycom's from `Program.cs` - nothing above `IHrClient` needs
+  to know or care which HR system it's actually talking to.
 - **IdentityFlow.Graph** - `IEntraProvisioningClient` (bulkUpload,
   chunked to the documented 50-ops/call, throttled to 40 calls/5s) and
   `IEntraDirectoryClient` (user lookup + assigned-group reconciliation via

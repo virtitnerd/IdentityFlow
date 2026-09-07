@@ -7,12 +7,12 @@ using Microsoft.Extensions.Options;
 using IdentityFlow.Core.Abstractions;
 using IdentityFlow.Core.Domain;
 
-namespace IdentityFlow.Paycom;
+namespace IdentityFlow.Clients.Paycom;
 
 public sealed class PaycomHttpClient(
     HttpClient httpClient,
     IOptionsMonitor<PaycomClientOptions> optionsMonitor,
-    ILogger<PaycomHttpClient> logger) : IPaycomClient
+    ILogger<PaycomHttpClient> logger) : IHrClient
 {
     private OAuthToken? _cachedToken;
 

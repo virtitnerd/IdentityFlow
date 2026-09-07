@@ -38,7 +38,7 @@ public class SyncOrchestratorTests
         IReadOnlyDictionary<string, EmployeeSnapshot>? snapshots = null)
     {
         return new SyncOrchestrator(
-            new FakePaycomClient(employees),
+            new FakeHrClient(employees),
             provisioningClient,
             directoryClient,
             new FakeFieldMappingStore(mappings ?? []),
@@ -431,7 +431,7 @@ public class SyncOrchestratorTests
         Assert.Contains(run.EmployeeResults, r => r.Outcome == SyncOutcomes.DryRunLifecyclePreview && r.Detail!.Contains("E1"));
     }
 
-    private sealed class FakePaycomClient(IReadOnlyList<EmployeeRecord> employees) : IPaycomClient
+    private sealed class FakeHrClient(IReadOnlyList<EmployeeRecord> employees) : IHrClient
     {
         public Task<IReadOnlyList<EmployeeRecord>> GetAllEmployeesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(employees);

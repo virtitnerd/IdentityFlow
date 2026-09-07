@@ -1,10 +1,11 @@
 using System.Net;
 using System.Text;
+using IdentityFlow.Clients.Paycom;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
-namespace IdentityFlow.Paycom.Tests;
+namespace IdentityFlow.Clients.Tests.Paycom;
 
 public class PaycomHttpClientTests
 {

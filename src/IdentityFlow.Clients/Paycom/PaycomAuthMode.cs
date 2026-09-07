@@ -1,4 +1,4 @@
-namespace IdentityFlow.Paycom;
+namespace IdentityFlow.Clients.Paycom;
 
 public enum PaycomAuthMode
 {

@@ -17,7 +17,7 @@ namespace IdentityFlow.Core.Sync;
 /// scheduled and manual runs.
 /// </summary>
 public sealed class SyncOrchestrator(
-    IPaycomClient paycomClient,
+    IHrClient hrClient,
     IEntraProvisioningClient provisioningClient,
     IEntraDirectoryClient directoryClient,
     IFieldMappingStore fieldMappingStore,
@@ -73,7 +73,7 @@ public sealed class SyncOrchestrator(
             // The three store calls stay sequential on purpose: they share
             // one scoped DbContext, which EF Core does not allow to run
             // more than one operation on concurrently.
-            var employeesTask = paycomClient.GetAllEmployeesAsync(cancellationToken);
+            var employeesTask = hrClient.GetAllEmployeesAsync(cancellationToken);
             var mappings = await fieldMappingStore.GetAllAsync(cancellationToken);
             var groupRules = await groupRuleStore.GetAllAsync(cancellationToken);
             var previousSnapshots = await snapshotStore.GetAllAsync(cancellationToken);

@@ -1,4 +1,4 @@
-namespace IdentityFlow.Paycom;
+namespace IdentityFlow.Clients.Paycom;
 
 /// <summary>
 /// Configuration for talking to Paycom's API. Confirmed against Paycom's

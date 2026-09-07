@@ -19,14 +19,15 @@ it's built this way instead of a hand-rolled SCIM server.
 src/
   IdentityFlow.Core/      Domain models, mapping engine, group rule
                                      evaluator, SyncOrchestrator (shared pipeline)
-  IdentityFlow.Paycom/    Configurable Paycom API client
+  IdentityFlow.Clients/   HR system clients behind IHrClient - Paycom/ is the
+                                     only one configured today (see IHrClient's doc comment)
   IdentityFlow.Graph/     Entra bulkUpload client + Graph directory/group client
   IdentityFlow.Data/      EF Core persistence (Azure SQL)
   IdentityFlow.Functions/ Azure Functions isolated worker (timer + HTTP triggers)
   IdentityFlow.Web/       Razor Pages admin/monitoring UI (Entra ID sign-in)
 tests/
   IdentityFlow.Core.Tests/    Mapping engine + group rule evaluator
-  IdentityFlow.Paycom.Tests/  Paycom HTTP client (auth, pagination, URL composition)
+  IdentityFlow.Clients.Tests/ Paycom HTTP client (auth, pagination, URL composition)
 infra/                              Bicep IaC
 docs/                               Architecture, Entra app setup, Paycom integration, deployment
 ```

@@ -2,7 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\IdentityFlow.Core\IdentityFlow.Core.csproj" />
-    <ProjectReference Include="..\IdentityFlow.Paycom\IdentityFlow.Paycom.csproj" />
+    <ProjectReference Include="..\IdentityFlow.Clients\IdentityFlow.Clients.csproj" />
     <ProjectReference Include="..\IdentityFlow.Graph\IdentityFlow.Graph.csproj" />
     <ProjectReference Include="..\IdentityFlow.Data\IdentityFlow.Data.csproj" />
   </ItemGroup>

@@ -8,7 +8,7 @@ using IdentityFlow.Core.Mapping;
 using IdentityFlow.Core.Sync;
 using IdentityFlow.Data;
 using IdentityFlow.Graph;
-using IdentityFlow.Paycom;
+using IdentityFlow.Clients.Paycom;
 
 var builder = WebApplication.CreateBuilder(args);
 
