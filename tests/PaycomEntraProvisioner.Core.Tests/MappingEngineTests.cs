@@ -58,7 +58,7 @@ public class MappingEngineTests
         };
 
         var resource = engine.BuildScimResource(SampleEmployee(), mappings, Today);
-        resource.FinalizeExtensionSchema();
+        resource.FinalizeDeferredSchemas();
 
         Assert.Contains(Scim.ScimUserResource.EntraExtensionSchema, resource.Schemas);
         Assert.Equal("CC-42", resource.ExtensionAttributes["extensionAttribute1"]);
@@ -68,27 +68,28 @@ public class MappingEngineTests
     public void BuildScimResource_WritesUnrecognizedTargetAttributeAsFlatAttribute()
     {
         // The engine must not require every possible Entra target attribute
-        // to have dedicated handling: anything not in AttributeHandlers -
-        // e.g. employeeHireDate, or any other standard/custom attribute
-        // this engine has no special SCIM sub-object shape for - still has
-        // to be settable, just as a flat top-level attribute rather than
-        // one assembled into a typed sub-object like name/emails/manager.
+        // to have dedicated handling: a registered directory schema
+        // extension property (a flat name like this one, per Graph's own
+        // extension-property naming convention - see docs/entra-app-setup.md's
+        // "custom directory extension attributes" section) still has to be
+        // settable, just as a flat top-level attribute rather than one
+        // assembled into a typed sub-object like name/emails/manager.
         var engine = new MappingEngine();
         var employee = new EmployeeRecord
         {
             EmployeeCode = "E100",
             WorkEmail = "jane.doe@contoso.com",
             Status = EmploymentStatus.Active,
-            RawFields = new Dictionary<string, string?> { ["Hire_Date"] = "2026-01-15" }
+            RawFields = new Dictionary<string, string?> { ["Cost_Center"] = "CC-42" }
         };
         var mappings = new List<FieldMapping>
         {
-            new() { SourceField = "Hire_Date", TargetAttribute = "employeeHireDate" }
+            new() { SourceField = "Cost_Center", TargetAttribute = "extension_3f1a2b2c9c9c4b2a9c1a2b3c4d5e6f7a_CostCenter" }
         };
 
         var resource = engine.BuildScimResource(employee, mappings, Today);
 
-        Assert.Equal("2026-01-15", resource.AdditionalAttributes["employeeHireDate"]);
+        Assert.Equal("CC-42", resource.AdditionalAttributes["extension_3f1a2b2c9c9c4b2a9c1a2b3c4d5e6f7a_CostCenter"]);
     }
 
     [Fact]
@@ -102,7 +103,40 @@ public class MappingEngineTests
 
         var resource = engine.BuildScimResource(SampleEmployee(), mappings, Today);
 
-        Assert.Equal("SALES", resource.Department);
+        Assert.Equal("SALES", resource.EnterpriseAttributes["department"]);
+    }
+
+    [Fact]
+    public void BuildScimResource_NestsManagerAndOtherEnterpriseAttributesUnderEnterpriseSchema()
+    {
+        // Regression guard for a real bug: department/manager/employeeNumber/
+        // costCenter/organization/division were previously written as bare
+        // top-level attributes, which sit outside every schema Entra's
+        // provisioning job recognizes and so can never be attribute-mapped
+        // on the Entra side. Confirmed against Microsoft's own
+        // inbound-provisioning-api-custom-attributes sample payload, which
+        // nests exactly this set under
+        // urn:ietf:params:scim:schemas:extension:enterprise:2.0:User.
+        var engine = new MappingEngine();
+        var employee = SampleEmployee();
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "Department_Description", TargetAttribute = "department" },
+            new() { SourceField = "Employee_Code", TargetAttribute = "manager" },
+            new() { SourceField = "Employee_Code", TargetAttribute = "employeeNumber" },
+            new() { SourceField = "Cost_Center", TargetAttribute = "costCenter" }
+        };
+
+        var resource = engine.BuildScimResource(employee, mappings, Today);
+
+        Assert.Contains(Scim.ScimUserResource.EnterpriseUserSchema, resource.Schemas);
+        Assert.Equal("Sales", resource.EnterpriseAttributes["department"]);
+        Assert.Equal("E100", resource.EnterpriseAttributes["employeeNumber"]);
+        Assert.Equal("CC-42", resource.EnterpriseAttributes["costCenter"]);
+        var manager = Assert.IsType<Scim.ScimManager>(resource.EnterpriseAttributes["manager"]);
+        Assert.Equal("E100", manager.Value);
+        Assert.DoesNotContain("department", resource.AdditionalAttributes.Keys);
+        Assert.DoesNotContain("manager", resource.AdditionalAttributes.Keys);
     }
 
     [Fact]

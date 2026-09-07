@@ -65,3 +65,4 @@ appsettings.*.local.json
 # Rider / VS
 .idea/
 .vs/
+*.csproj.user

@@ -27,39 +27,37 @@ public static class KnownEntraAttributes
         Enumerable.Range(1, 15).Select(i => $"extensionAttribute{i}").ToArray();
 
     /// <summary>
-    /// Other standard Microsoft Entra ID / Azure AD Connect provisioning-
-    /// schema attributes with no special SCIM sub-object shape (unlike, say,
-    /// <c>name</c> or <c>emails</c> in <see cref="StandardAttributes"/>).
-    /// <see cref="MappingEngine"/> already writes any target attribute name
-    /// it doesn't explicitly recognize as a flat attribute on the outgoing
-    /// SCIM resource, so nothing here is required for a mapping to work -
-    /// this list exists purely so these commonly-useful attributes show up
-    /// as suggestions instead of having to be typed from memory.
+    /// Other genuine SCIM Core User schema attributes (RFC 7643 §4.1) with
+    /// no special sub-object shape that <see cref="MappingEngine"/> doesn't
+    /// give a dedicated handler to - it still writes them correctly as flat
+    /// top-level attributes via <c>ScimUserResource.AdditionalAttributes</c>,
+    /// same as <see cref="StandardAttributes"/>'s handled ones, just without
+    /// needing a handler since they need no nesting. This list exists purely
+    /// for suggestion purposes.
     ///
-    /// Before relying on any of these, confirm it's also listed on the
-    /// API-driven provisioning job's own Attribute Mapping (Advanced Options
-    /// -&gt; Edit target User attributes) - the same requirement documented
-    /// for custom directory extensions in docs/entra-app-setup.md, since
-    /// Entra's provisioning job (not this app) is what actually decides
-    /// which attributes on an incoming record get written to the directory.
-    /// <c>employeeLeaveDateTime</c> specifically is treated by Microsoft as
-    /// a sensitive attribute requiring an extra one-time consent/role grant
-    /// beyond normal Graph API permissions - verify current Microsoft Learn
-    /// guidance before mapping to it.
+    /// IMPORTANT: this is deliberately a short, spec-verified list, not a
+    /// grab-bag of "things Entra can store." A name like <c>employeeHireDate</c>
+    /// or <c>usageLocation</c> is a real Microsoft Graph *directory*
+    /// attribute name - but it is not a SCIM attribute name, and typing it
+    /// as a target here would produce a bare top-level JSON key that sits
+    /// outside every schema Entra's provisioning job recognizes, so it
+    /// couldn't be attribute-mapped on the Entra side at all (this is
+    /// exactly the bug this list previously had - see git history). To
+    /// reach a directory-only attribute that has no SCIM equivalent, the
+    /// admin must first extend the provisioning job's own schema with a
+    /// custom SCIM attribute for it (Attribute Mapping -&gt; Advanced Options
+    /// -&gt; Edit target User attributes - the same mechanism documented for
+    /// custom directory extensions in docs/entra-app-setup.md), then target
+    /// that custom SCIM attribute name here - not the directory attribute's
+    /// own name.
     /// </summary>
     public static readonly IReadOnlyList<string> AdditionalWritableAttributes =
     [
-        "employeeId",
-        "employeeType",
-        "employeeHireDate",
-        "employeeLeaveDateTime",
-        "usageLocation",
-        "preferredLanguage",
-        "mailNickname",
         "userType",
-        "physicalDeliveryOfficeName",
-        "telephoneNumber",
-        "facsimileTelephoneNumber",
-        "showInAddressList"
+        "preferredLanguage",
+        "nickName",
+        "profileUrl",
+        "locale",
+        "timezone"
     ];
 }

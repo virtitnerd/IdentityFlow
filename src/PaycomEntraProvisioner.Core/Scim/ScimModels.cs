@@ -43,6 +43,7 @@ public sealed class ScimBulkOperation
 public sealed class ScimUserResource
 {
     public const string CoreUserSchema = "urn:ietf:params:scim:schemas:core:2.0:User";
+    public const string EnterpriseUserSchema = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User";
     public const string EntraExtensionSchema = "urn:ietf:params:scim:schemas:extension:ExtensionAttributes";
 
     [JsonPropertyName("schemas")]
@@ -75,16 +76,10 @@ public sealed class ScimUserResource
     [JsonPropertyName("title")]
     public string? Title { get; set; }
 
-    [JsonPropertyName("department")]
-    public string? Department { get; set; }
-
-    [JsonPropertyName("manager")]
-    public ScimManager? Manager { get; set; }
-
     /// <summary>
-    /// Additional flat attributes (core schema attributes not modeled above,
-    /// e.g. "employeeOrgData.division", "employeeOrgData.costCenter") keyed
-    /// exactly as the target field mapping specifies.
+    /// Additional flat, core-schema attributes not modeled above (e.g. a
+    /// custom directory schema extension property name) keyed exactly as
+    /// the target field mapping specifies.
     /// </summary>
     [JsonExtensionData]
     public Dictionary<string, object?> AdditionalAttributes { get; init; } = [];
@@ -98,23 +93,48 @@ public sealed class ScimUserResource
     public Dictionary<string, object?> ExtensionAttributes { get; } = [];
 
     /// <summary>
-    /// Populates the extension schema key in <see cref="AdditionalAttributes"/>
-    /// and registers the schema URN. Call once all extension values have
-    /// been set.
+    /// Values belonging to the standard SCIM Enterprise User extension
+    /// schema - <c>department</c>, <c>manager</c>, <c>employeeNumber</c>,
+    /// <c>costCenter</c>, <c>organization</c>, <c>division</c>. Per RFC 7643
+    /// §4.3 these are not Core User attributes and must be nested under
+    /// <see cref="EnterpriseUserSchema"/> rather than sent as bare top-level
+    /// attributes - confirmed against Microsoft's own reference
+    /// implementation (the CSV2SCIM.ps1 sample in
+    /// AzureAD/entra-id-inbound-provisioning), whose AttributeMapping.psd1
+    /// nests exactly this set the same way. A bare top-level "department" or
+    /// "manager" attribute (this project's previous behavior) sits outside
+    /// any schema Entra's provisioning job recognizes, so it can't be
+    /// attribute-mapped on the Entra side at all.
     /// </summary>
-    public void FinalizeExtensionSchema()
+    [JsonIgnore]
+    public Dictionary<string, object?> EnterpriseAttributes { get; } = [];
+
+    /// <summary>
+    /// Populates the extension/enterprise schema keys in
+    /// <see cref="AdditionalAttributes"/> and registers each schema URN.
+    /// Call once all extension/enterprise values have been set.
+    /// </summary>
+    public void FinalizeDeferredSchemas()
     {
-        if (ExtensionAttributes.Count == 0)
+        if (ExtensionAttributes.Count > 0)
         {
-            return;
+            if (!Schemas.Contains(EntraExtensionSchema))
+            {
+                Schemas.Add(EntraExtensionSchema);
+            }
+
+            AdditionalAttributes[EntraExtensionSchema] = ExtensionAttributes;
         }
 
-        if (!Schemas.Contains(EntraExtensionSchema))
+        if (EnterpriseAttributes.Count > 0)
         {
-            Schemas.Add(EntraExtensionSchema);
-        }
+            if (!Schemas.Contains(EnterpriseUserSchema))
+            {
+                Schemas.Add(EnterpriseUserSchema);
+            }
 
-        AdditionalAttributes[EntraExtensionSchema] = ExtensionAttributes;
+            AdditionalAttributes[EnterpriseUserSchema] = EnterpriseAttributes;
+        }
     }
 }
 

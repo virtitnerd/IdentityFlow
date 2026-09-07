@@ -50,6 +50,22 @@ This is the Microsoft-built Enterprise Application that receives the
      attributes (`displayName`, `department`, `jobTitle`, ...) plus any
      `extensionAttribute1`-`15` or directory schema extensions you want
      populated for dynamic group rules or other applications.
+   - **Manager**: map a `FieldMapping` with `TargetAttribute = "manager"` from
+     Paycom's manager-employee-code field (`ManagerEmployeeCode`). Send the
+     manager's own Paycom employee code as the value, **not** their Entra
+     object ID - Entra's provisioning service resolves this reference
+     internally against the manager's own already-provisioned record
+     (matched the same way as any other user, via `externalId`/`employeeId`),
+     exactly like Microsoft's own reference samples do
+     ([CSV2SCIM.ps1](https://github.com/AzureAD/entra-id-inbound-provisioning/tree/main/PowerShell/CSV2SCIM)'s
+     `manager.value = 'ManagerID'`). Two consequences worth knowing: the
+     manager must already exist as a provisioned/matched user for the
+     reference to resolve - a brand-new employee reported in the same sync
+     run as their brand-new manager may need one extra cycle before the
+     link takes; and this app sends `manager` under the SCIM Enterprise User
+     extension schema (not a bare top-level attribute), which is what makes
+     it something Entra's Attribute Mapping page can actually recognize as a
+     source in the first place.
 4. Save, then start provisioning. Note two values from this app's
    **Overview** / **Provisioning** pages for configuration:
    - **Service principal object ID** → `Entra:ProvisioningServicePrincipalId`
@@ -117,23 +133,55 @@ as (client credentials) to call Graph.
 
 ### Mapping any other Entra attribute
 
-The Field Mappings page's target attribute isn't limited to the handful of
-attributes suggested by autocomplete. `MappingEngine` writes any target
-attribute name it doesn't explicitly recognize (userPrincipalName, name,
-emails, manager, addresses, etc. - the ones needing a specific SCIM
-sub-object shape) as a flat top-level attribute instead, so any standard
-Microsoft Entra ID / Azure AD Connect provisioning-schema attribute -
-`employeeId`, `employeeType`, `employeeHireDate`, `usageLocation`,
-`preferredLanguage`, and others - can be targeted by typing its name, even
-before it's added to any suggestion list.
+Two important distinctions to keep straight here, since it's easy to
+conflate them (an earlier version of this app's code did, briefly):
 
-That said, this app being *willing* to send an attribute doesn't mean
-Entra's provisioning job will *persist* it - the job's own **Attribute
-Mapping** decides what an incoming record is allowed to write, exactly the
-same requirement already noted below for custom directory extensions.
-Before relying on a mapping to a less-common attribute, confirm it's
-listed under **Attribute Mapping → Advanced Options → Edit target User
-attributes** on the provisioning job from step 1, and add it there if not.
+1. A **SCIM attribute name** - what `FieldMapping.TargetAttribute` actually
+   means: the shape/path this app writes into the outgoing `bulkUpload`
+   JSON. This is governed by the SCIM Core User (RFC 7643 §4.1) and
+   Enterprise User extension (§4.3) schemas, not by whatever a directory
+   attribute happens to be called.
+2. An **Entra/Graph directory attribute name** (`employeeId`,
+   `usageLocation`, `employeeHireDate`, ...) - what the incoming SCIM
+   attribute eventually gets *written to*, decided entirely by the
+   provisioning job's own **Attribute Mapping** configuration in the Entra
+   admin center. This app has no influence over that decision beyond
+   sending a value at all.
+
+`MappingEngine` writes any target attribute name it doesn't explicitly
+recognize (userPrincipalName, name, emails, addresses, etc. - the ones
+needing a specific SCIM sub-object shape) as a flat top-level attribute.
+That mechanism is only correct for attributes with no sub-object shape of
+their own - which, for genuine SCIM attributes, means Core schema ones like
+`userType`, `preferredLanguage`, `nickName`, `locale`, `timezone` (see
+`KnownEntraAttributes.AdditionalWritableAttributes`). It is **not** correct
+for a bare directory attribute name like `employeeHireDate` or
+`usageLocation` - those have no SCIM representation at all, so typing them
+as a target here produces a JSON key that sits outside every schema Entra's
+provisioning job recognizes, and can't be attribute-mapped on the Entra
+side no matter what.
+
+To reach a directory attribute that has no SCIM equivalent, the provisioning
+job's own schema has to be extended first, same as for a custom directory
+extension:
+
+1. Provisioning job → **Edit Provisioning** → **Mappings** → open the
+   attribute mapping → **Advanced Options** → **Edit target User
+   attributes**.
+2. Add the attribute as a SCIM schema extension under your own namespace,
+   e.g. `urn:ietf:params:scim:schemas:extension:contoso:1.0:User:HireDate`.
+3. Add a new mapping from that extension attribute to the real target (e.g.
+   `employeeHireDate`).
+4. Only *then* does `urn:ietf:params:scim:schemas:extension:contoso:1.0:User:HireDate`
+   become a meaningful `FieldMapping.TargetAttribute` value in this app - and
+   because it's nested under a namespace object in the wire JSON (not a bare
+   flat key), reaching it requires the same kind of dedicated nesting this
+   app already gives `extensionAttribute1`-`15` and the Enterprise User
+   attributes, not the generic flat-attribute fallback.
+
+See Microsoft's own worked example (HireDate/JobCode via a custom `contoso`
+namespace):
+https://learn.microsoft.com/entra/identity/app-provisioning/inbound-provisioning-api-custom-attributes
 
 `employeeLeaveDateTime` is worth calling out specifically: Microsoft treats
 it as a sensitive attribute requiring an extra one-time consent/role grant

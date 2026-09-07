@@ -30,7 +30,17 @@ public sealed class MappingEngine
         new("middleName", [], (r, v) => (r.Name ??= new()).MiddleName = v),
         new("honorificSuffix", [], (r, v) => (r.Name ??= new()).HonorificSuffix = v),
         new("jobTitle", ["title"], (r, v) => r.Title = v),
-        new("department", [], (r, v) => r.Department = v),
+
+        // These five belong to the SCIM Enterprise User extension schema
+        // (RFC 7643 §4.3), not the core User schema - ScimUserResource
+        // nests them under EnterpriseUserSchema via EnterpriseAttributes
+        // rather than as bare top-level attributes, matching Microsoft's
+        // own CSV2SCIM.ps1 reference sample.
+        new("department", [], (r, v) => r.EnterpriseAttributes["department"] = v),
+        new("employeeNumber", [], (r, v) => r.EnterpriseAttributes["employeeNumber"] = v),
+        new("costCenter", [], (r, v) => r.EnterpriseAttributes["costCenter"] = v),
+        new("organization", [], (r, v) => r.EnterpriseAttributes["organization"] = v),
+        new("division", [], (r, v) => r.EnterpriseAttributes["division"] = v),
         new("mail", ["email", "workemail"], (r, v) =>
         {
             if (!string.IsNullOrEmpty(v))
@@ -57,9 +67,17 @@ public sealed class MappingEngine
         }),
         new("manager", ["manageremployeecode"], (r, v) =>
         {
+            // Also Enterprise-schema, not core. The value is the manager's
+            // own stable source-system identifier (their Paycom employee
+            // code, matching how this app already sets externalId for
+            // every employee) - not an Entra object id. Entra's
+            // provisioning service resolves this reference internally
+            // against the manager's own already-provisioned record, the
+            // same pattern Microsoft's CSV2SCIM.ps1 sample uses
+            // (manager.value = the source system's WorkerID, not a GUID).
             if (!string.IsNullOrEmpty(v))
             {
-                r.Manager = new ScimManager { Value = v };
+                r.EnterpriseAttributes["manager"] = new ScimManager { Value = v };
             }
         }),
         new("streetAddress", [], (r, v) => (r.Addresses ??= [new ScimAddress()])[0].StreetAddress = v),
@@ -137,7 +155,7 @@ public sealed class MappingEngine
             AssignTargetAttribute(resource, mapping, finalValue);
         }
 
-        resource.FinalizeExtensionSchema();
+        resource.FinalizeDeferredSchemas();
         return resource;
     }
 
