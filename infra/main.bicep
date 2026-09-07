@@ -32,7 +32,7 @@ param sqlAadAdminObjectId string
 @description('Display name of the Azure SQL AAD admin (user or group name).')
 param sqlAadAdminName string
 
-@description('SKU for the Azure SQL Database. GeneralPurpose Serverless is a reasonable default for this workload size.')
+@description('vCore size of the Azure SQL Database, GeneralPurpose Serverless tier only (name format GP_S_Gen5_<vCores>, e.g. GP_S_Gen5_1, GP_S_Gen5_2, GP_S_Gen5_4). This template only supports that one tier - sql.bicep hardcodes tier: \'GeneralPurpose\' and sets the serverless-only autoPauseDelay/minCapacity properties unconditionally, so a Hyperscale, Business Critical, DTU-tier (Basic/Standard/Premium), or even non-serverless GeneralPurpose SKU name will fail deployment. Azure SQL Managed Instance and SQL Server on a VM are not supported by this template at all.')
 param sqlDatabaseSkuName string = 'GP_S_Gen5_1'
 
 @description('App Service Plan SKU for the Razor Pages admin UI.')

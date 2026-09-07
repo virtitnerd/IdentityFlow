@@ -9,12 +9,12 @@
 -- system-assigned identity, the contained user name must match the app's
 -- name exactly.
 
-CREATE USER [func-paycomprov-prod] FROM EXTERNAL PROVIDER;
-ALTER ROLE db_datareader ADD MEMBER [func-paycomprov-prod];
-ALTER ROLE db_datawriter ADD MEMBER [func-paycomprov-prod];
-ALTER ROLE db_ddladmin ADD MEMBER [func-paycomprov-prod]; -- needed for EF Core migrations run at startup
+CREATE USER [func-identityflowprod] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_datareader ADD MEMBER [func-identityflowprod];
+ALTER ROLE db_datawriter ADD MEMBER [func-identityflowprod];
+ALTER ROLE db_ddladmin ADD MEMBER [func-identityflowprod]; -- needed for EF Core migrations run at startup
 
-CREATE USER [app-paycomprov-prod] FROM EXTERNAL PROVIDER;
-ALTER ROLE db_datareader ADD MEMBER [app-paycomprov-prod];
-ALTER ROLE db_datawriter ADD MEMBER [app-paycomprov-prod];
-ALTER ROLE db_ddladmin ADD MEMBER [app-paycomprov-prod];
+CREATE USER [app-identityflowprod] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_datareader ADD MEMBER [app-identityflowprod];
+ALTER ROLE db_datawriter ADD MEMBER [app-identityflowprod];
+ALTER ROLE db_ddladmin ADD MEMBER [app-identityflowprod];
