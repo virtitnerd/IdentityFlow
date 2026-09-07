@@ -11,15 +11,7 @@ public sealed class GroupAssignmentRuleStore(ProvisionerDbContext db) : IGroupAs
 
     public async Task<GroupAssignmentRule> UpsertAsync(GroupAssignmentRule rule, CancellationToken cancellationToken = default)
     {
-        if (rule.Id == 0)
-        {
-            db.GroupAssignmentRules.Add(rule);
-        }
-        else
-        {
-            db.GroupAssignmentRules.Update(rule);
-        }
-
+        db.GroupAssignmentRules.Upsert(rule, rule.Id);
         await db.SaveChangesAsync(cancellationToken);
         return rule;
     }

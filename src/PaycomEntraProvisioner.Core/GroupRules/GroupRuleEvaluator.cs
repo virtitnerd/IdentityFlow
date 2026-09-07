@@ -1,8 +1,7 @@
-using System.Linq.Dynamic.Core;
-using System.Linq.Expressions;
 using PaycomEntraProvisioner.Core.Configuration;
 using PaycomEntraProvisioner.Core.Domain;
 using PaycomEntraProvisioner.Core.Exceptions;
+using PaycomEntraProvisioner.Core.Expressions;
 
 namespace PaycomEntraProvisioner.Core.GroupRules;
 
@@ -16,19 +15,13 @@ public sealed class GroupRuleEvaluator
 {
     public bool Evaluate(GroupAssignmentRule rule, EmployeeRecord employee)
     {
-        try
-        {
-            var employeeParam = Expression.Parameter(typeof(EmployeeRecord), "employee");
-            var lambda = DynamicExpressionParser.ParseLambda([employeeParam], typeof(bool), rule.Condition);
-            return (bool)lambda.Compile().DynamicInvoke(employee)!;
-        }
-        catch (Exception ex) when (ex is not ExpressionEvaluationException)
-        {
-            throw new ExpressionEvaluationException(
-                rule.Condition,
-                $"group rule '{rule.Name}' (employee {employee.EmployeeCode})",
-                ex);
-        }
+        var result = DynamicExpressionEvaluator.Evaluate(
+            rule.Condition,
+            $"group rule '{rule.Name}' (employee {employee.EmployeeCode})",
+            typeof(bool),
+            [("employee", typeof(EmployeeRecord), employee)]);
+
+        return (bool)result!;
     }
 
     /// <summary>

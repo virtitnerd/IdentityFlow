@@ -57,25 +57,33 @@ public class IndexModel(
 
     private async Task LoadSuggestionsAsync(CancellationToken cancellationToken)
     {
-        KnownPaycomFields = await discoveredFieldStore.GetKnownFieldNamesAsync(cancellationToken);
+        // These two hit independent resources (a DB read vs. a live Graph
+        // call), so they run concurrently instead of paying the sum of
+        // both round-trips on an admin page likely opened often.
+        var knownFieldsTask = discoveredFieldStore.GetKnownFieldNamesAsync(cancellationToken);
+        var customExtensionsTask = GetCustomExtensionAttributesSafeAsync(cancellationToken);
 
-        // Custom directory extensions require a live Graph call; never let
-        // that failure block loading this page - fall back to the
-        // standard/extensionAttribute lists alone.
-        IReadOnlyList<string> customExtensions;
-        try
-        {
-            customExtensions = await directoryClient.GetCustomExtensionAttributeNamesAsync(cancellationToken);
-        }
-        catch
-        {
-            customExtensions = [];
-        }
+        await Task.WhenAll(knownFieldsTask, customExtensionsTask);
 
+        KnownPaycomFields = knownFieldsTask.Result;
         EntraAttributeSuggestions = [
             .. KnownEntraAttributes.StandardAttributes,
             .. KnownEntraAttributes.ExtensionAttributeSlots,
-            .. customExtensions
+            .. customExtensionsTask.Result
         ];
+    }
+
+    private async Task<IReadOnlyList<string>> GetCustomExtensionAttributesSafeAsync(CancellationToken cancellationToken)
+    {
+        // Never let a Graph failure block loading this page - fall back to
+        // the standard/extensionAttribute lists alone.
+        try
+        {
+            return await directoryClient.GetCustomExtensionAttributeNamesAsync(cancellationToken);
+        }
+        catch
+        {
+            return [];
+        }
     }
 }

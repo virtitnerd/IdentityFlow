@@ -46,10 +46,17 @@ public sealed class SyncOrchestrator(
 
         try
         {
-            var employees = await paycomClient.GetAllEmployeesAsync(cancellationToken);
+            // The Paycom pull is an independent external HTTP call - start
+            // it before the sequential DB reads below rather than after, so
+            // its latency overlaps with theirs instead of adding to them.
+            // The three store calls stay sequential on purpose: they share
+            // one scoped DbContext, which EF Core does not allow to run
+            // more than one operation on concurrently.
+            var employeesTask = paycomClient.GetAllEmployeesAsync(cancellationToken);
             var mappings = await fieldMappingStore.GetAllAsync(cancellationToken);
             var groupRules = await groupRuleStore.GetAllAsync(cancellationToken);
             var previousSnapshots = await snapshotStore.GetAllAsync(cancellationToken);
+            var employees = await employeesTask;
 
             run.EmployeesEvaluated = employees.Count;
 
@@ -327,12 +334,11 @@ public sealed class SyncOrchestrator(
 
         var allGroupIds = desiredMembersByGroup.Keys.Union(fullyManagedGroups, StringComparer.OrdinalIgnoreCase);
 
-        foreach (var groupId in allGroupIds)
+        if (dryRun)
         {
-            var desiredUpns = desiredMembersByGroup.GetValueOrDefault(groupId, []);
-
-            if (dryRun)
+            foreach (var groupId in allGroupIds)
             {
+                var desiredUpns = desiredMembersByGroup.GetValueOrDefault(groupId, []);
                 run.EmployeeResults.Add(new SyncRunEmployeeResult
                 {
                     SyncRunId = run.Id,
@@ -342,38 +348,44 @@ public sealed class SyncOrchestrator(
                     Success = true,
                     Detail = $"{desiredUpns.Count} employee(s) currently match rules targeting this group."
                 });
-                continue;
             }
 
-            var desiredObjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var lookupFailures = new List<string>();
+            return;
+        }
 
-            foreach (var upn in desiredUpns)
+        // Resolve every distinct UPN across every group exactly once - an
+        // employee who matches rules for 3 groups used to trigger the same
+        // Graph lookup 3 times, once per group, instead of once overall.
+        var distinctUpns = desiredMembersByGroup.Values.SelectMany(set => set).Distinct(StringComparer.OrdinalIgnoreCase);
+        var objectIdsByUpn = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var failuresByUpn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var upn in distinctUpns)
+        {
+            try
             {
-                try
-                {
-                    var objectId = await directoryClient.FindUserObjectIdAsync(upn, cancellationToken);
-                    if (objectId is not null)
-                    {
-                        desiredObjectIds.Add(objectId);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // Caught here (rather than letting it propagate to the
-                    // outer try/catch in RunAsync) for two reasons: one bad
-                    // lookup shouldn't fail the whole run when bulkUpload
-                    // already succeeded, and - more importantly - silently
-                    // treating a failed lookup the same as "not found" would
-                    // shrink desiredObjectIds and could wipe a fully-managed
-                    // group's entire membership below on a merely transient
-                    // Graph error.
-                    lookupFailures.Add($"{upn}: {ex.Message}");
-                    logger.LogError(ex, "Failed resolving Entra object id for {Upn} while reconciling group {GroupId}", upn, groupId);
-                }
+                objectIdsByUpn[upn] = await directoryClient.FindUserObjectIdAsync(upn, cancellationToken);
             }
+            catch (Exception ex)
+            {
+                // Caught here (rather than letting it propagate to the outer
+                // try/catch in RunAsync) for two reasons: one bad lookup
+                // shouldn't fail the whole run when bulkUpload already
+                // succeeded, and - more importantly - silently treating a
+                // failed lookup the same as "not found" would shrink
+                // desiredObjectIds and could wipe a fully-managed group's
+                // entire membership below on a merely transient Graph error.
+                failuresByUpn[upn] = ex.Message;
+                logger.LogError(ex, "Failed resolving Entra object id for {Upn} during group reconciliation", upn);
+            }
+        }
 
-            if (lookupFailures.Count > 0)
+        foreach (var groupId in allGroupIds)
+        {
+            var desiredUpns = desiredMembersByGroup.GetValueOrDefault(groupId, []);
+            var failedUpns = desiredUpns.Where(failuresByUpn.ContainsKey).ToList();
+
+            if (failedUpns.Count > 0)
             {
                 run.EmployeeResults.Add(new SyncRunEmployeeResult
                 {
@@ -383,9 +395,19 @@ public sealed class SyncOrchestrator(
                     Outcome = "GroupReconciliationError",
                     Success = false,
                     Detail = "Skipped reconciling this group this run because one or more member lookups failed " +
-                             $"(retrying next run rather than risk removing members based on an incomplete list): {string.Join("; ", lookupFailures)}"
+                             "(retrying next run rather than risk removing members based on an incomplete list): " +
+                             string.Join("; ", failedUpns.Select(upn => $"{upn}: {failuresByUpn[upn]}"))
                 });
                 continue;
+            }
+
+            var desiredObjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var upn in desiredUpns)
+            {
+                if (objectIdsByUpn.GetValueOrDefault(upn) is { } objectId)
+                {
+                    desiredObjectIds.Add(objectId);
+                }
             }
 
             if (!fullyManagedGroups.Contains(groupId) && desiredObjectIds.Count == 0)

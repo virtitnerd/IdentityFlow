@@ -19,6 +19,9 @@ public class MappingEngineTests
         {
             ["Email_Work"] = "jane.doe@contoso.com",
             ["Employee_Code"] = "E100",
+            ["First_Name"] = "Jane",
+            ["Last_Name"] = "Doe",
+            ["Department_Description"] = "Sales",
             ["Cost_Center"] = "CC-42"
         }
     };
@@ -30,8 +33,8 @@ public class MappingEngineTests
         var mappings = new List<FieldMapping>
         {
             new() { SourceField = "Email_Work", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true },
-            new() { SourceField = "FirstName", TargetAttribute = "givenName" },
-            new() { SourceField = "LastName", TargetAttribute = "familyName" },
+            new() { SourceField = "First_Name", TargetAttribute = "givenName" },
+            new() { SourceField = "Last_Name", TargetAttribute = "familyName" },
         };
 
         var resource = engine.BuildScimResource(SampleEmployee(), mappings);
@@ -65,12 +68,33 @@ public class MappingEngineTests
         var engine = new MappingEngine();
         var mappings = new List<FieldMapping>
         {
-            new() { SourceField = "Department", TargetAttribute = "department", TransformExpression = "value.ToUpper()" }
+            new() { SourceField = "Department_Description", TargetAttribute = "department", TransformExpression = "value.ToUpper()" }
         };
 
         var resource = engine.BuildScimResource(SampleEmployee(), mappings);
 
         Assert.Equal("SALES", resource.Department);
+    }
+
+    [Fact]
+    public void BuildScimResource_DoesNotFallBackToClrPropertyNamesForSourceField()
+    {
+        // Regression guard: SourceField must resolve against RawFields (the
+        // Paycom-native field names) only. A reflection fallback onto
+        // EmployeeRecord's typed CLR property names used to exist here and
+        // was removed - it was a footgun where a mapping conventionally
+        // named after a property (e.g. "FirstName" instead of the real
+        // Paycom field "First_Name") would silently break the moment that
+        // property was ever renamed, with nothing to catch it.
+        var engine = new MappingEngine();
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "FirstName", TargetAttribute = "givenName" }
+        };
+
+        var resource = engine.BuildScimResource(SampleEmployee(), mappings);
+
+        Assert.Null(resource.Name?.GivenName);
     }
 
     [Fact]

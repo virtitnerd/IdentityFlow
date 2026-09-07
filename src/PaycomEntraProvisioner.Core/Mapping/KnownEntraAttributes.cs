@@ -9,32 +9,15 @@ public static class KnownEntraAttributes
 {
     /// <summary>
     /// Every core SCIM/User attribute name <see cref="MappingEngine"/>
-    /// recognizes explicitly (kept in sync with
-    /// <c>MappingEngine.AssignTargetAttribute</c>'s switch cases). Anything
-    /// not in this list still works as a target - it's written as a flat
-    /// attribute path via <c>ScimUserResource.AdditionalAttributes</c> - so
-    /// this is a suggestion list, not a validation whitelist.
+    /// recognizes explicitly, sourced directly from the same table that
+    /// drives attribute assignment (<c>MappingEngine.AttributeHandlers</c>)
+    /// so the two can't drift out of sync the way two independently
+    /// hand-maintained lists could. Anything not in this list still works
+    /// as a target - it's written as a flat attribute path via
+    /// <c>ScimUserResource.AdditionalAttributes</c> - so this is a
+    /// suggestion list, not a validation whitelist.
     /// </summary>
-    public static readonly IReadOnlyList<string> StandardAttributes =
-    [
-        "userPrincipalName",
-        "displayName",
-        "givenName",
-        "familyName",
-        "middleName",
-        "honorificSuffix",
-        "jobTitle",
-        "department",
-        "mail",
-        "mobilePhone",
-        "workPhone",
-        "manager",
-        "streetAddress",
-        "city",
-        "state",
-        "postalCode",
-        "country"
-    ];
+    public static readonly IReadOnlyList<string> StandardAttributes = MappingEngine.SupportedTargetAttributeNames;
 
     /// <summary>
     /// The fixed set of fifteen generic extension attributes every Entra

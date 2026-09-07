@@ -11,15 +11,7 @@ public sealed class FieldMappingStore(ProvisionerDbContext db) : IFieldMappingSt
 
     public async Task<FieldMapping> UpsertAsync(FieldMapping mapping, CancellationToken cancellationToken = default)
     {
-        if (mapping.Id == 0)
-        {
-            db.FieldMappings.Add(mapping);
-        }
-        else
-        {
-            db.FieldMappings.Update(mapping);
-        }
-
+        db.FieldMappings.Upsert(mapping, mapping.Id);
         await db.SaveChangesAsync(cancellationToken);
         return mapping;
     }

@@ -84,6 +84,30 @@ public sealed class EntraProvisioningClient(
         return await httpClient.SendAsync(httpRequest, cancellationToken);
     }
 
+    private async Task<HttpResponseMessage> SendGetWithThrottleRetryAsync(
+        string url,
+        EntraOptions options,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        await AttachTokenAsync(request, cancellationToken);
+        var response = await httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode != HttpStatusCode.TooManyRequests)
+        {
+            return response;
+        }
+
+        var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(options.ThrottleWindowSeconds);
+        logger.LogWarning("Graph request throttled; waiting {Delay} before retrying {Url}.", retryAfter, url);
+        response.Dispose();
+        await Task.Delay(retryAfter, cancellationToken);
+
+        using var retryRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        await AttachTokenAsync(retryRequest, cancellationToken);
+        return await httpClient.SendAsync(retryRequest, cancellationToken);
+    }
+
     private async Task ProcessResponseAsync(
         HttpResponseMessage response,
         IReadOnlyList<ScimBulkOperation> chunk,
@@ -127,10 +151,7 @@ public sealed class EntraProvisioningClient(
                   $"?$top={top}&$orderby=activityDateTime desc" +
                   $"&$filter=serviceType eq 'API-driven'";
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        await AttachTokenAsync(request, cancellationToken);
-
-        using var response = await httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendGetWithThrottleRetryAsync(url, options, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             logger.LogWarning(

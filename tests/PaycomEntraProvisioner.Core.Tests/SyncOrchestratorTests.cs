@@ -17,7 +17,13 @@ public class SyncOrchestratorTests
         EmployeeCode = code,
         WorkEmail = email,
         Department = department,
-        Status = EmploymentStatus.Active
+        Status = EmploymentStatus.Active,
+        RawFields = new Dictionary<string, string?>
+        {
+            ["EmployeeCode"] = code,
+            ["WorkEmail"] = email,
+            ["Department"] = department
+        }
     };
 
     private static SyncOrchestrator CreateOrchestrator(
@@ -109,6 +115,32 @@ public class SyncOrchestratorTests
 
         Assert.Contains("E1@contoso.com", directoryClient.LookedUpUpns);
         Assert.DoesNotContain("e1@personal-domain.com", directoryClient.LookedUpUpns);
+    }
+
+    [Fact]
+    public async Task RunAsync_ResolvesEachEmployeeObjectIdOnceAcrossMultipleMatchingGroups()
+    {
+        // An employee matching more than one group rule used to trigger a
+        // separate Graph lookup per group instead of once overall.
+        var employees = new List<EmployeeRecord> { Employee("E1", "e1@contoso.com") };
+        var mappings = new List<FieldMapping>
+        {
+            new() { SourceField = "WorkEmail", TargetAttribute = "userPrincipalName", IsMatchingAttribute = true }
+        };
+        var groupRules = new List<GroupAssignmentRule>
+        {
+            new() { Name = "Sales", Condition = "employee.Department == \"Sales\"", TargetGroupObjectId = "grp-1", RemoveWhenConditionFails = true },
+            new() { Name = "AllStaff", Condition = "true", TargetGroupObjectId = "grp-2", RemoveWhenConditionFails = true }
+        };
+
+        var directoryClient = new FakeDirectoryClient();
+        var provisioningClient = new FakeProvisioningClient(_ => new ScimStatus { Code = "201" });
+
+        var orchestrator = CreateOrchestrator(employees, provisioningClient, directoryClient, groupRules, mappings);
+        await orchestrator.RunAsync(SyncTrigger.Manual, "tester", dryRun: false);
+
+        Assert.Single(directoryClient.LookedUpUpns);
+        Assert.Equal("e1@contoso.com", directoryClient.LookedUpUpns[0]);
     }
 
     private sealed class FakePaycomClient(IReadOnlyList<EmployeeRecord> employees) : IPaycomClient

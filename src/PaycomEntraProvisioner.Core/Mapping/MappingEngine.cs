@@ -1,9 +1,6 @@
-using System.Linq.Dynamic.Core;
-using System.Linq.Expressions;
-using System.Reflection;
 using PaycomEntraProvisioner.Core.Configuration;
 using PaycomEntraProvisioner.Core.Domain;
-using PaycomEntraProvisioner.Core.Exceptions;
+using PaycomEntraProvisioner.Core.Expressions;
 using PaycomEntraProvisioner.Core.Scim;
 
 namespace PaycomEntraProvisioner.Core.Mapping;
@@ -15,6 +12,79 @@ namespace PaycomEntraProvisioner.Core.Mapping;
 /// </summary>
 public sealed class MappingEngine
 {
+    /// <summary>
+    /// Single source of truth for every core SCIM/User attribute this
+    /// engine recognizes by name: its aliases and how to assign it onto a
+    /// <see cref="ScimUserResource"/>. Both <see cref="AssignTargetAttribute"/>
+    /// and <see cref="KnownEntraAttributes.StandardAttributes"/> are driven
+    /// from this one table so the two can no longer drift out of sync with
+    /// each other the way a hand-maintained switch and a hand-maintained
+    /// suggestion list could.
+    /// </summary>
+    private static readonly IReadOnlyList<AttributeHandler> AttributeHandlers =
+    [
+        new("userPrincipalName", ["username"], (r, v) => r.UserName = v),
+        new("displayName", [], (r, v) => r.DisplayName = v),
+        new("givenName", ["firstname"], (r, v) => (r.Name ??= new()).GivenName = v),
+        new("familyName", ["lastname"], (r, v) => (r.Name ??= new()).FamilyName = v),
+        new("middleName", [], (r, v) => (r.Name ??= new()).MiddleName = v),
+        new("honorificSuffix", [], (r, v) => (r.Name ??= new()).HonorificSuffix = v),
+        new("jobTitle", ["title"], (r, v) => r.Title = v),
+        new("department", [], (r, v) => r.Department = v),
+        new("mail", ["email", "workemail"], (r, v) =>
+        {
+            if (!string.IsNullOrEmpty(v))
+            {
+                r.Emails ??= [];
+                r.Emails.Add(new ScimTypedValue { Value = v, Type = "work", Primary = true });
+            }
+        }),
+        new("mobilePhone", [], (r, v) =>
+        {
+            if (!string.IsNullOrEmpty(v))
+            {
+                r.PhoneNumbers ??= [];
+                r.PhoneNumbers.Add(new ScimTypedValue { Value = v, Type = "mobile" });
+            }
+        }),
+        new("workPhone", [], (r, v) =>
+        {
+            if (!string.IsNullOrEmpty(v))
+            {
+                r.PhoneNumbers ??= [];
+                r.PhoneNumbers.Add(new ScimTypedValue { Value = v, Type = "work" });
+            }
+        }),
+        new("manager", ["manageremployeecode"], (r, v) =>
+        {
+            if (!string.IsNullOrEmpty(v))
+            {
+                r.Manager = new ScimManager { Value = v };
+            }
+        }),
+        new("streetAddress", [], (r, v) => (r.Addresses ??= [new ScimAddress()])[0].StreetAddress = v),
+        new("city", [], (r, v) => (r.Addresses ??= [new ScimAddress()])[0].Locality = v),
+        new("state", [], (r, v) => (r.Addresses ??= [new ScimAddress()])[0].Region = v),
+        new("postalCode", [], (r, v) => (r.Addresses ??= [new ScimAddress()])[0].PostalCode = v),
+        new("country", [], (r, v) => (r.Addresses ??= [new ScimAddress()])[0].Country = v)
+    ];
+
+    /// <summary>
+    /// Canonical names of every attribute in <see cref="AttributeHandlers"/>,
+    /// used by <see cref="KnownEntraAttributes.StandardAttributes"/> to
+    /// populate the admin UI's suggestion list from the same table that
+    /// actually drives attribute assignment.
+    /// </summary>
+    internal static IReadOnlyList<string> SupportedTargetAttributeNames { get; } =
+        [.. AttributeHandlers.Select(h => h.CanonicalName)];
+
+    private sealed record AttributeHandler(string CanonicalName, string[] Aliases, Action<ScimUserResource, string?> Assign)
+    {
+        public bool Matches(string targetAttribute) =>
+            string.Equals(targetAttribute, CanonicalName, StringComparison.OrdinalIgnoreCase)
+            || Aliases.Contains(targetAttribute, StringComparer.OrdinalIgnoreCase);
+    }
+
     public ScimUserResource BuildScimResource(EmployeeRecord employee, IEnumerable<FieldMapping> mappings)
     {
         var resource = new ScimUserResource
@@ -57,19 +127,16 @@ public sealed class MappingEngine
         return result;
     }
 
-    private static string? ResolveSourceValue(EmployeeRecord employee, string sourceField)
-    {
-        if (employee.RawFields.TryGetValue(sourceField, out var rawValue))
-        {
-            return rawValue;
-        }
-
-        var property = typeof(EmployeeRecord).GetProperty(
-            sourceField,
-            BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-
-        return property?.GetValue(employee)?.ToString();
-    }
+    // RawFields already contains every field Paycom returned, verbatim,
+    // under its native Paycom name - the only names FieldMapping.SourceField
+    // is documented to reference. A reflection fallback onto EmployeeRecord's
+    // typed properties used to sit here too, but it was a pure footgun: a
+    // mapping could reference a typed property name by convention (e.g.
+    // "WorkEmail" instead of "Email_Work") and silently stop working the
+    // moment that property was ever renamed, with no compiler or run-time
+    // error anywhere in the pipeline.
+    private static string? ResolveSourceValue(EmployeeRecord employee, string sourceField) =>
+        employee.RawFields.GetValueOrDefault(sourceField);
 
     private static string? ApplyTransform(FieldMapping mapping, string? rawValue, EmployeeRecord employee)
     {
@@ -78,25 +145,13 @@ public sealed class MappingEngine
             return rawValue;
         }
 
-        try
-        {
-            var valueParam = Expression.Parameter(typeof(string), "value");
-            var employeeParam = Expression.Parameter(typeof(EmployeeRecord), "employee");
-            var lambda = DynamicExpressionParser.ParseLambda(
-                [valueParam, employeeParam],
-                typeof(object),
-                mapping.TransformExpression);
+        var result = DynamicExpressionEvaluator.Evaluate(
+            mapping.TransformExpression,
+            $"field mapping '{mapping.SourceField}' -> '{mapping.TargetAttribute}' (employee {employee.EmployeeCode})",
+            typeof(object),
+            [("value", typeof(string), rawValue), ("employee", typeof(EmployeeRecord), employee)]);
 
-            var result = lambda.Compile().DynamicInvoke(rawValue, employee);
-            return result?.ToString();
-        }
-        catch (Exception ex) when (ex is not ExpressionEvaluationException)
-        {
-            throw new ExpressionEvaluationException(
-                mapping.TransformExpression,
-                $"field mapping '{mapping.SourceField}' -> '{mapping.TargetAttribute}' (employee {employee.EmployeeCode})",
-                ex);
-        }
+        return result?.ToString();
     }
 
     private static void AssignTargetAttribute(ScimUserResource resource, FieldMapping mapping, string? value)
@@ -107,86 +162,16 @@ public sealed class MappingEngine
             return;
         }
 
-        switch (mapping.TargetAttribute.ToLowerInvariant())
+        var handler = AttributeHandlers.FirstOrDefault(h => h.Matches(mapping.TargetAttribute));
+        if (handler is not null)
         {
-            case "username":
-            case "userprincipalname":
-                resource.UserName = value;
-                break;
-            case "displayname":
-                resource.DisplayName = value;
-                break;
-            case "givenname":
-            case "firstname":
-                (resource.Name ??= new()).GivenName = value;
-                break;
-            case "familyname":
-            case "lastname":
-                (resource.Name ??= new()).FamilyName = value;
-                break;
-            case "middlename":
-                (resource.Name ??= new()).MiddleName = value;
-                break;
-            case "honorificsuffix":
-                (resource.Name ??= new()).HonorificSuffix = value;
-                break;
-            case "title":
-            case "jobtitle":
-                resource.Title = value;
-                break;
-            case "department":
-                resource.Department = value;
-                break;
-            case "mail":
-            case "email":
-            case "workemail":
-                if (!string.IsNullOrEmpty(value))
-                {
-                    resource.Emails ??= [];
-                    resource.Emails.Add(new ScimTypedValue { Value = value, Type = "work", Primary = true });
-                }
-                break;
-            case "mobilephone":
-                if (!string.IsNullOrEmpty(value))
-                {
-                    resource.PhoneNumbers ??= [];
-                    resource.PhoneNumbers.Add(new ScimTypedValue { Value = value, Type = "mobile" });
-                }
-                break;
-            case "workphone":
-                if (!string.IsNullOrEmpty(value))
-                {
-                    resource.PhoneNumbers ??= [];
-                    resource.PhoneNumbers.Add(new ScimTypedValue { Value = value, Type = "work" });
-                }
-                break;
-            case "manager":
-            case "manageremployeecode":
-                if (!string.IsNullOrEmpty(value))
-                {
-                    resource.Manager = new ScimManager { Value = value };
-                }
-                break;
-            case "streetaddress":
-                (resource.Addresses ??= [new ScimAddress()])[0].StreetAddress = value;
-                break;
-            case "city":
-                (resource.Addresses ??= [new ScimAddress()])[0].Locality = value;
-                break;
-            case "state":
-                (resource.Addresses ??= [new ScimAddress()])[0].Region = value;
-                break;
-            case "postalcode":
-                (resource.Addresses ??= [new ScimAddress()])[0].PostalCode = value;
-                break;
-            case "country":
-                (resource.Addresses ??= [new ScimAddress()])[0].Country = value;
-                break;
-            default:
-                // Arbitrary flat attribute path not covered above, e.g. a
-                // directory schema extension property name.
-                resource.AdditionalAttributes[mapping.TargetAttribute] = value;
-                break;
+            handler.Assign(resource, value);
+        }
+        else
+        {
+            // Arbitrary flat attribute path not covered above, e.g. a
+            // directory schema extension property name.
+            resource.AdditionalAttributes[mapping.TargetAttribute] = value;
         }
     }
 }
