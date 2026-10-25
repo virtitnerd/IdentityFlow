@@ -6,6 +6,15 @@ updates:
       - "/tests/*"
     schedule:
       interval: "weekly"
+    groups:
+      # Related packages (Microsoft.Extensions.*, EF Core, test tooling) depend on
+      # each other, and a PR that bumps only some of them fails the restore with a
+      # package downgrade error (NU1605). Take minor and patch updates together
+      # across all projects in one PR. Major updates stay as individual PRs.
+      nuget-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
