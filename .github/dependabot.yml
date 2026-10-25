@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directories:
+      - "/src/*"
+      - "/tests/*"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # init and analyze must always run the same CodeQL version, or the
+      # analysis fails with a config/version mismatch. Update them together.
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
